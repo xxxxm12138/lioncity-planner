@@ -5,6 +5,7 @@
 
 import { Photo, PhotoCurationResult, PostFormat, CuratedPost, CollageLayout } from '../types';
 import { photoToBase64Jpeg } from './imageUtils';
+import { getCachedCuration, setCachedCuration } from './curationCache';
 
 /** Max images per API request. Larger sets are auto-batched. */
 const BATCH_SIZE = 24;
@@ -119,16 +120,25 @@ export async function curateDayPhotos(
   photos: Photo[],
   day: number,
   tripContext?: string,
-  onProgress?: (p: CurateProgress) => void
+  onProgress?: (p: CurateProgress) => void,
+  options?: { forceRefresh?: boolean }
 ): Promise<PhotoCurationResult> {
   if (photos.length === 0) {
     return { day, summary: '没有照片可分析', posts: [] };
   }
 
+  const context = tripContext || '';
+  if (!options?.forceRefresh) {
+    const cached = getCachedCuration(day, photos, context);
+    if (cached) return cached;
+  }
+
   const serverOk = await fetchServerHasGemini();
   if (!serverOk) {
     await new Promise(r => setTimeout(r, 800));
-    return demoCurate(photos, day);
+    const demo = demoCurate(photos, day);
+    setCachedCuration(day, photos, context, demo);
+    return demo;
   }
 
   const chunks = chunkPhotos(photos, BATCH_SIZE);
@@ -178,16 +188,18 @@ export async function curateDayPhotos(
 
   if (merged.length === 0) {
     const fallback = demoCurate(photos, day);
-    return {
+    const result: PhotoCurationResult = {
       ...fallback,
       summary: `${batchNote} 模型分组编号未能匹配到照片，已按顺序自动生成 ${fallback.posts.length} 条方案。`,
     };
+    setCachedCuration(day, photos, context, result);
+    return result;
   }
 
   const usedIds = new Set(merged.flatMap(p => p.photoIds));
   const unusedPhotoIds = photos.filter(p => !usedIds.has(p.id)).map(p => p.id);
 
-  return {
+  const result: PhotoCurationResult = {
     day,
     summary:
       [batchNote, summaries.filter(Boolean).join(' ')].filter(Boolean).join(' ') ||
@@ -195,4 +207,7 @@ export async function curateDayPhotos(
     posts: merged,
     unusedPhotoIds: unusedPhotoIds.length ? unusedPhotoIds : undefined,
   };
+
+  setCachedCuration(day, photos, context, result);
+  return result;
 }

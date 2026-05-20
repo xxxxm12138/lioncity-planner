@@ -73,3 +73,363 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Travel folio / storybook layout */
+.storybook {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 0 3rem;
+}
+
+.storybook-cover {
+  text-align: center;
+  padding: 2.5rem 1.5rem 3rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--color-editorial-border);
+}
+
+.storybook-series {
+  font-size: 0.65rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--color-editorial-accent);
+  font-weight: 600;
+  margin: 0 0 1rem;
+}
+
+.storybook-day-index {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: #999;
+  margin: 0 0 0.5rem;
+}
+
+.storybook-cover-title {
+  font-size: clamp(2rem, 6vw, 2.75rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+  color: var(--color-editorial-text);
+}
+
+.storybook-cover-vibe {
+  font-size: 0.75rem;
+  color: #888;
+  margin: 0.75rem 0 0;
+  font-style: italic;
+}
+
+.storybook-cover-rule {
+  width: 3rem;
+  height: 1px;
+  background: var(--color-editorial-accent);
+  margin: 1.75rem auto;
+  opacity: 0.6;
+}
+
+.storybook-cover-lead {
+  font-size: 1.05rem;
+  line-height: 1.85;
+  color: #444;
+  font-style: italic;
+  margin: 0 auto;
+  max-width: 32rem;
+}
+
+.storybook-cover-meta {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #aaa;
+  margin: 1.25rem 0 0;
+}
+
+.storybook-to-report {
+  margin-top: 1.5rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-editorial-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.storybook-to-report:hover {
+  border-bottom-color: var(--color-editorial-accent);
+}
+
+.storybook-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3.5rem;
+}
+
+.storybook-spread {
+  position: relative;
+  padding: 0 0.25rem;
+}
+
+.storybook-spread-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.75rem;
+}
+
+.storybook-chapter {
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-editorial-accent);
+  font-weight: 600;
+}
+
+.storybook-folio {
+  font-size: 0.6rem;
+  color: #bbb;
+  letter-spacing: 0.08em;
+}
+
+.storybook-spread-title {
+  font-size: 1.65rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  margin: 0 0 0.35rem;
+}
+
+.storybook-spread-epigraph {
+  font-size: 0.7rem;
+  color: #888;
+  margin: 0 0 1.5rem;
+  letter-spacing: 0.04em;
+}
+
+.storybook-dot {
+  margin: 0 0.35rem;
+  opacity: 0.5;
+}
+
+.storybook-photo {
+  position: relative;
+  overflow: hidden;
+  background: #ebe6dc;
+}
+
+.storybook-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.storybook-photo-caption {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.92);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.storybook-photo:hover .storybook-photo-caption {
+  opacity: 1;
+}
+
+.storybook-photos {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 1.5rem;
+}
+
+.storybook-photos--solo .storybook-photo--hero {
+  aspect-ratio: 4 / 5;
+  max-height: 28rem;
+}
+
+.storybook-photos--duo {
+  grid-template-columns: 1fr 1fr;
+}
+
+.storybook-photos--duo .storybook-photo--half {
+  aspect-ratio: 3 / 4;
+}
+
+.storybook-photos--trio {
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 0.35rem;
+}
+
+.storybook-photos--trio .storybook-photo--trio-main {
+  grid-row: span 2;
+  min-height: 100%;
+  aspect-ratio: auto;
+  height: 100%;
+}
+
+.storybook-photos--trio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.storybook-photos--trio .storybook-photo--trio-sub {
+  flex: 1;
+  aspect-ratio: 4 / 3;
+}
+
+.storybook-photos--quad {
+  grid-template-columns: 1fr 1fr;
+}
+
+.storybook-photos--quad .storybook-photo--quad {
+  aspect-ratio: 1;
+}
+
+.storybook-photos--mosaic {
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(5rem, auto);
+}
+
+.storybook-photos--mosaic .storybook-photo--mosaic-lead {
+  grid-column: span 2;
+  grid-row: span 2;
+  aspect-ratio: 4 / 3;
+}
+
+.storybook-photos--mosaic .storybook-photo--mosaic-cell {
+  aspect-ratio: 1;
+}
+
+.storybook-photos--album {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.storybook-photos--album .storybook-photo--album-cell {
+  aspect-ratio: 1;
+}
+
+.storybook-whisper {
+  margin: 0 0 1.25rem;
+  padding: 0 0 0 1rem;
+  border-left: 2px solid var(--color-editorial-border);
+  font-size: 0.9rem;
+  line-height: 1.75;
+  color: #666;
+  font-style: italic;
+}
+
+.storybook-verse {
+  font-size: 1rem;
+  line-height: 1.9;
+  color: var(--color-editorial-text);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.storybook-tags {
+  margin: 1rem 0 0;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: var(--color-editorial-accent);
+  opacity: 0.75;
+}
+
+.storybook-copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.4rem;
+  border: none;
+  background: rgba(249, 247, 242, 0.9);
+  color: #999;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.storybook-spread:hover .storybook-copy {
+  opacity: 1;
+}
+
+.storybook-copy:hover {
+  color: var(--color-editorial-accent);
+}
+
+.storybook-orphans {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px dashed var(--color-editorial-border);
+}
+
+.storybook-orphans-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #aaa;
+  margin: 0 0 1rem;
+  text-align: center;
+}
+
+.storybook-orphans-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.storybook-orphan {
+  width: 4.5rem;
+  text-align: center;
+}
+
+.storybook-orphan img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+.storybook-orphan span {
+  display: block;
+  font-size: 0.5rem;
+  color: #aaa;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storybook-colophon {
+  text-align: center;
+  font-size: 0.6rem;
+  letter-spacing: 0.25em;
+  color: #ccc;
+  margin-top: 3rem;
+}
+
+@media print {
+  .storybook {
+    max-width: none;
+    padding: 0;
+  }
+  .storybook-cover {
+    padding-top: 0;
+  }
+  .storybook-photo-caption {
+    opacity: 1;
+  }
+}

@@ -9,7 +9,9 @@ import { Itinerary, Photo, CuratedPost, PhotoCurationResult } from '../types';
 import { Camera, Download, Upload, BookOpen, MapPin, Sparkles, Loader2, Copy, FileText, Printer } from 'lucide-react';
 import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
+import { getCachedCuration } from '../lib/curationCache';
 import { buildDayReportHtml, downloadDayReportHtml, printDayReport } from '../lib/dayReport';
+import StoryBook from './StoryBook';
 
 interface AlbumProps {
   itinerary: Itinerary;
@@ -29,6 +31,7 @@ export default function Album(props?: AlbumProps) {
   const [curateProgress, setCurateProgress] = useState<{ current: number; total: number } | null>(null);
   const [curation, setCuration] = useState<PhotoCurationResult | null>(null);
   const [curateError, setCurateError] = useState<string | null>(null);
+  const [usedCache, setUsedCache] = useState(false);
   const [serverHasGemini, setServerHasGemini] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,6 +47,34 @@ export default function Album(props?: AlbumProps) {
     if (fromDay?.length) return fromDay;
     return allPhotos.filter(p => p.day === uploadDay);
   }, [itinerary.days, uploadDay, allPhotos]);
+
+  const tripContext = useMemo(() => {
+    const dayPlan = itinerary.days.find(d => d.day === uploadDay);
+    return dayPlan
+      ? `Day ${dayPlan.day}: ${dayPlan.title}. Locations: ${dayPlan.locations.map(l => l.name).join(', ')}`
+      : itinerary.narrative?.vibe || '';
+  }, [itinerary, uploadDay]);
+
+  const dayPhotoKey = useMemo(
+    () => dayPhotos.map(p => p.id).sort().join('|'),
+    [dayPhotos]
+  );
+
+  const hasCachedCuration = useMemo(
+    () => Boolean(dayPhotos.length && getCachedCuration(uploadDay, dayPhotos, tripContext)),
+    [uploadDay, dayPhotos, tripContext, dayPhotoKey]
+  );
+
+  useEffect(() => {
+    if (dayPhotos.length === 0) {
+      setCuration(null);
+      setUsedCache(false);
+      return;
+    }
+    const cached = getCachedCuration(uploadDay, dayPhotos, tripContext);
+    setCuration(cached);
+    setUsedCache(false);
+  }, [uploadDay, dayPhotoKey, tripContext, dayPhotos]);
 
   const processFiles = useCallback((files: File[]) => {
     const imageFiles = files.filter(f => f.type.startsWith('image/'));
@@ -71,17 +102,31 @@ export default function Album(props?: AlbumProps) {
     return buildDayReportHtml({ curation, itinerary, photosById: photoById });
   }, [curation, itinerary, photoById]);
 
-  const runCurate = async () => {
+  const runCurate = async (forceRefresh = false) => {
     if (dayPhotos.length === 0) return;
-    setCurating(true);
     setCurateError(null);
     setCurateProgress(null);
+
+    if (!forceRefresh) {
+      const cached = getCachedCuration(uploadDay, dayPhotos, tripContext);
+      if (cached) {
+        setCuration(cached);
+        setUsedCache(true);
+        setView('report');
+        return;
+      }
+    }
+
+    setUsedCache(false);
+    setCurating(true);
     try {
-      const dayPlan = itinerary.days.find(d => d.day === uploadDay);
-      const context = dayPlan
-        ? `Day ${dayPlan.day}: ${dayPlan.title}. Locations: ${dayPlan.locations.map(l => l.name).join(', ')}`
-        : itinerary.narrative?.vibe;
-      const result = await curateDayPhotos(dayPhotos, uploadDay, context, p => setCurateProgress(p));
+      const result = await curateDayPhotos(
+        dayPhotos,
+        uploadDay,
+        tripContext,
+        p => setCurateProgress(p),
+        { forceRefresh }
+      );
       setCuration(result);
       setView('report');
     } catch (e) {
@@ -111,18 +156,6 @@ export default function Album(props?: AlbumProps) {
     const text = [curation.summary, '', ...blocks].join('\n\n');
     navigator.clipboard.writeText(text).catch(() => {});
   };
-
-  const curationGroups = useMemo(() => {
-    if (!curation?.posts.length) return [];
-    const groups: { theme: string; posts: CuratedPost[] }[] = [];
-    for (const post of curation.posts) {
-      const theme = post.theme || '其他';
-      const last = groups[groups.length - 1];
-      if (last?.theme === theme) last.posts.push(post);
-      else groups.push({ theme, posts: [post] });
-    }
-    return groups;
-  }, [curation]);
 
   return (
     <div className="w-full h-full overflow-y-auto overflow-x-hidden scrollbar-hide bg-editorial-bg font-serif">
@@ -203,18 +236,33 @@ export default function Album(props?: AlbumProps) {
           </div>
         )}
         {view === 'curate' && (
-          <button
-            onClick={runCurate}
-            disabled={curating || dayPhotos.length === 0}
-            className="flex items-center gap-2 bg-editorial-accent text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:opacity-90 active:scale-95 transition-all shrink-0 disabled:opacity-50"
-          >
-            {curating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            {curating && curateProgress
-              ? `分析中 ${curateProgress.current}/${curateProgress.total} 批…`
-              : curating
-                ? '分析中…'
-                : `分析第 ${uploadDay} 天 (${dayPhotos.length} 张)`}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {hasCachedCuration && (
+              <button
+                type="button"
+                onClick={() => runCurate(true)}
+                disabled={curating || dayPhotos.length === 0}
+                className="px-3 py-2 rounded-full border border-editorial-border font-sans text-[10px] font-bold text-gray-600 hover:border-editorial-accent disabled:opacity-50"
+              >
+                重新分析
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => runCurate(false)}
+              disabled={curating || dayPhotos.length === 0}
+              className="flex items-center gap-2 bg-editorial-accent text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
+            >
+              {curating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {curating && curateProgress
+                ? `分析中 ${curateProgress.current}/${curateProgress.total} 批…`
+                : curating
+                  ? '分析中…'
+                  : hasCachedCuration
+                    ? `查看第 ${uploadDay} 天编排`
+                    : `分析第 ${uploadDay} 天 (${dayPhotos.length} 张)`}
+            </button>
+          </div>
         )}
       </div>
 
@@ -313,133 +361,70 @@ export default function Album(props?: AlbumProps) {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="max-w-2xl mx-auto space-y-6"
+              className="max-w-3xl mx-auto"
             >
-              <motion.div className="bg-white border border-editorial-border rounded-2xl p-5">
-                <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold mb-2">AI 旅行社交编排</p>
-                <p className="text-sm text-gray-600 leading-relaxed">
-                  上传当天照片后点「分析」。AI 会按<strong>主题</strong>与<strong>时间线</strong>告诉你<strong>哪些照片应放在同一条故事</strong>里，并说明编组理由。完成后可到「完整报告」页查看整日文档。
+              {!curation && !curating && (
+                <p className="text-center font-sans text-[10px] text-gray-400 tracking-widest uppercase mb-8 print:hidden">
+                  将当日影像交给 AI，编成可翻阅的行记
+                  {dayPhotos.length > 0 && ` · ${dayPhotos.length} 帧待读`}
                 </p>
-                <p className="font-sans text-[11px] text-gray-400 mt-2">当前第 {uploadDay} 天共 {dayPhotos.length} 张（超过 24 张将自动分批，请耐心等待）</p>
-                {serverHasGemini === false && (
-                  <p className="mt-3 text-sm text-amber-700 font-sans bg-amber-50 border border-amber-200 rounded-lg p-3">
-                    服务端未读到 <strong>GEMINI_API_KEY</strong>。你已在 Vercel 配置的话，请对该变量勾选 Production 后<strong>重新 Deploy</strong> 一次（敏感变量不会打进网页，只会在服务端 API 使用）。
-                  </p>
-                )}
-                {serverHasGemini === true && (
-                  <p className="mt-3 text-sm text-emerald-700 font-sans bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-                    已连接服务端 AI（密钥在 Vercel 安全运行，不会暴露在浏览器）。
-                  </p>
-                )}
-                {curateError && <p className="mt-3 text-sm text-red-500 font-sans">{curateError}</p>}
-              </motion.div>
+              )}
+              {(hasCachedCuration || usedCache) && !curating && curation && (
+                <p className="text-center font-sans text-[10px] text-gray-400 italic mb-6 print:hidden">
+                  {usedCache ? '自本地卷册唤回' : '卷册已备，可翻阅或重新执笔'}
+                </p>
+              )}
+              {curateError && (
+                <p className="text-center text-sm text-red-500 font-sans mb-6">{curateError}</p>
+              )}
+              {serverHasGemini === false && !curation && (
+                <p className="text-center font-sans text-[10px] text-amber-700/80 mb-6 max-w-md mx-auto">
+                  未连接 AI 时将使用演示卷册；配置 GEMINI_API_KEY 后可获真实编排
+                </p>
+              )}
               {curating ? (
-                <motion.div className="text-center py-16 bg-white border border-editorial-border rounded-2xl">
-                  <Loader2 className="w-10 h-10 text-editorial-accent animate-spin mx-auto mb-4" />
-                  <p className="font-sans font-bold text-sm text-gray-600">
+                <div className="storybook-cover text-center py-20">
+                  <Loader2 className="w-8 h-8 text-editorial-accent/60 animate-spin mx-auto mb-6" />
+                  <p className="text-xl italic text-gray-500">
                     {curateProgress
-                      ? `正在分析第 ${curateProgress.current}/${curateProgress.total} 批…`
-                      : '正在准备照片…'}
+                      ? `翻阅底片中… ${curateProgress.current} / ${curateProgress.total}`
+                      : '正在打开空白册页…'}
                   </p>
-                  <p className="font-sans text-[11px] text-gray-400 mt-2">照片较多时请等待 1~3 分钟</p>
-                </motion.div>
+                  <p className="font-sans text-[10px] text-gray-300 mt-3 tracking-widest uppercase">
+                    请稍候
+                  </p>
+                </div>
               ) : !curation ? (
-                <motion.div className="text-center py-12">
-                  <Sparkles className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                  <p className="font-sans text-sm text-gray-400">上传照片后点击右上角「分析第 {uploadDay} 天」</p>
-                </motion.div>
+                <div className="storybook-cover text-center py-16">
+                  <Sparkles className="w-10 h-10 text-editorial-accent/25 mx-auto mb-6" />
+                  <p className="text-2xl italic text-gray-400 leading-relaxed">
+                    册页尚空
+                  </p>
+                  <p className="font-sans text-[10px] text-gray-300 mt-4 tracking-widest">
+                    上传照片后，点右上角开始编排
+                  </p>
+                </div>
+              ) : curation.posts.length === 0 ? (
+                <div className="storybook-cover text-center py-12">
+                  <p className="italic text-gray-500 mb-6">光影已至，叙事未成——请再试一次编排</p>
+                  <button
+                    type="button"
+                    onClick={() => runCurate(true)}
+                    disabled={curating}
+                    className="font-sans text-[10px] font-bold tracking-widest uppercase text-editorial-accent border-b border-editorial-accent/30 pb-0.5"
+                  >
+                    重新执笔
+                  </button>
+                </div>
               ) : (
-                <>
-                  <motion.p className="font-sans text-sm text-gray-600 bg-editorial-accent/5 border border-editorial-accent/10 rounded-xl p-4">
-                    {curation.summary}
-                    {curation.posts.length > 0 && (
-                      <span className="block mt-2 font-bold text-editorial-accent">
-                        共 {curation.posts.length} 条发布方案 ↓
-                      </span>
-                    )}
-                  </motion.p>
-                  {curation.posts.length === 0 ? (
-                    <motion.div className="text-center py-10 bg-white border border-amber-200 rounded-2xl">
-                      <p className="font-sans text-sm text-amber-800 mb-3">分析已完成，但没有生成可展示的卡片。</p>
-                      <button
-                        type="button"
-                        onClick={runCurate}
-                        disabled={curating}
-                        className="px-4 py-2 rounded-full bg-editorial-accent text-white font-sans text-[11px] font-bold"
-                      >
-                        重新分析
-                      </button>
-                    </motion.div>
-                  ) : (
-                  <motion.div className="space-y-6">
-                    {curation.posts.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setView('report')}
-                        className="w-full py-3 rounded-2xl bg-editorial-text text-white font-sans text-[11px] font-bold flex items-center justify-center gap-2"
-                      >
-                        <FileText className="w-4 h-4" />
-                        查看完整故事线报告
-                      </button>
-                    )}
-                    {curationGroups.map(group => (
-                      <div key={group.theme}>
-                        <div className="flex items-center gap-2 mb-3 sticky top-24 z-10 bg-editorial-bg/90 py-1">
-                          <span className="font-sans text-[10px] font-bold uppercase tracking-widest text-white bg-editorial-accent px-3 py-1 rounded-full">
-                            主题 · {group.theme}
-                          </span>
-                          <span className="font-sans text-[10px] text-gray-400">{group.posts.length} 条时间线</span>
-                        </div>
-                        <div className="space-y-4">
-                          {group.posts.map(post => {
-                            const thumbs = photosForPost(post);
-                            return (
-                              <motion.div key={post.id} className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
-                                <motion.div className="flex flex-wrap items-start justify-between gap-2 mb-2">
-                                  <motion.div>
-                                    <p className="text-lg tracking-tight">{post.title}</p>
-                                    <p className="font-sans text-[10px] text-gray-500 mt-1">
-                                      <span className="text-editorial-accent font-bold">{post.timeSlot}</span>
-                                      {' · '}
-                                      {post.scene} · {post.mood} · 故事线 #{post.storylineOrder}
-                                    </p>
-                                  </motion.div>
-                                </motion.div>
-                                <div className="font-sans text-[11px] text-gray-600 bg-amber-50/80 border border-amber-100 rounded-xl p-3 mb-3 leading-relaxed">
-                                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-800/80 mb-1">编组说明 · 建议放一起的照片</p>
-                                  {post.collageRationale}
-                                  {post.layoutHint && (
-                                    <p className="text-gray-500 mt-1.5 text-[10px]">顺序提示：{post.layoutHint}</p>
-                                  )}
-                                </div>
-                                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 mb-3">
-                                  {thumbs.map((p, i) => (
-                                    <div key={p.id} className="relative aspect-square rounded-md overflow-hidden">
-                                      <img src={p.url} alt="" className="w-full h-full object-cover" />
-                                      <span className="absolute top-0.5 left-0.5 w-5 h-5 bg-editorial-accent text-white text-[9px] font-bold font-sans rounded-full flex items-center justify-center">
-                                        {i + 1}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</p>
-                                <p className="font-sans text-[10px] text-editorial-accent/80 mb-3">{post.hashtags.join(' ')}</p>
-                                <button
-                                  type="button"
-                                  onClick={() => copyCaption(post)}
-                                  className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"
-                                >
-                                  <Copy className="w-3 h-3" /> 复制本条文案
-                                </button>
-                              </motion.div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </motion.div>
-                  )}
-                </>
+                <StoryBook
+                  curation={curation}
+                  itinerary={itinerary}
+                  photosForPost={photosForPost}
+                  photosById={photoById}
+                  onCopyCaption={copyCaption}
+                  onOpenReport={() => setView('report')}
+                />
               )}
             </motion.div>
           )}
@@ -450,86 +435,39 @@ export default function Album(props?: AlbumProps) {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="max-w-2xl mx-auto space-y-4"
+              className="max-w-3xl mx-auto"
             >
               {!curation ? (
-                <div className="text-center py-16 bg-white border border-editorial-border rounded-2xl p-8">
-                  <FileText className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                  <p className="font-sans text-sm text-gray-500 mb-4">请先在「智能编排」完成第 {uploadDay} 天分析</p>
+                <div className="storybook-cover text-center py-16">
+                  <FileText className="w-10 h-10 text-editorial-accent/25 mx-auto mb-6" />
+                  <p className="text-xl italic text-gray-400 mb-6">卷册未立，请先完成智能编排</p>
                   <button
                     type="button"
                     onClick={() => setView('curate')}
-                    className="px-6 py-2.5 rounded-full bg-editorial-accent text-white font-sans text-[11px] font-bold"
+                    className="font-sans text-[10px] font-bold tracking-widest uppercase text-editorial-accent"
                   >
-                    去智能编排
+                    前往编排 →
                   </button>
                 </div>
               ) : (
-                <>
-                  <div className="flex flex-wrap gap-2 print:hidden">
+                <div className="album-print-container">
+                  <div className="flex justify-end gap-3 mb-4 print:hidden">
                     <button
                       type="button"
                       onClick={copyFullReportText}
-                      className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1"
+                      className="font-sans text-[10px] text-gray-400 hover:text-editorial-accent flex items-center gap-1"
                     >
                       <Copy className="w-3 h-3" /> 复制全文
                     </button>
                   </div>
-                  <div className="bg-white border border-editorial-border rounded-2xl p-6 space-y-8 album-print-container">
-                    <div>
-                      <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold">完整故事线报告</p>
-                      <h2 className="text-2xl tracking-tight mt-1">
-                        {itinerary.days.find(d => d.day === curation.day)?.title || `第 ${curation.day} 天`}
-                      </h2>
-                      <p className="font-sans text-sm text-gray-600 mt-3 leading-relaxed">{curation.summary}</p>
-                    </div>
-                    {[...curation.posts]
-                      .sort((a, b) => a.storylineOrder - b.storylineOrder)
-                      .map(post => {
-                        const thumbs = photosForPost(post);
-                        return (
-                          <section key={post.id} className="break-inside-avoid border-t border-editorial-border pt-6">
-                            <p className="font-sans text-[10px] font-bold text-editorial-accent uppercase tracking-widest">
-                              故事线 #{post.storylineOrder} · {post.theme} · {post.timeSlot}
-                            </p>
-                            <h3 className="text-xl tracking-tight mt-1">{post.title}</h3>
-                            <p className="font-sans text-[11px] text-gray-400 mt-1">{post.scene} · {post.mood}</p>
-                            <div className="mt-3 p-3 bg-amber-50/80 border border-amber-100 rounded-xl text-sm text-gray-700 leading-relaxed">
-                              <strong className="block text-[10px] uppercase tracking-widest text-amber-800/90 mb-1">编组说明</strong>
-                              {post.collageRationale}
-                            </div>
-                            <p className="font-sans text-[11px] font-bold text-gray-500 mt-3 mb-2">本组 {thumbs.length} 张照片（按建议顺序）</p>
-                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                              {thumbs.map((p, i) => (
-                                <div key={p.id} className="relative aspect-square rounded-lg overflow-hidden">
-                                  <img src={p.url} alt="" className="w-full h-full object-cover" />
-                                  <span className="absolute top-1 left-1 min-w-[1.25rem] h-5 px-1 bg-editorial-accent text-white text-[9px] font-bold font-sans rounded-full flex items-center justify-center">
-                                    {i + 1}
-                                  </span>
-                                  <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[8px] px-1 py-0.5 truncate font-sans">
-                                    {p.locationName}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            <p className="font-sans text-sm text-gray-700 mt-4 leading-relaxed">{post.caption}</p>
-                            <p className="font-sans text-[11px] text-editorial-accent/80 mt-1">{post.hashtags.join(' ')}</p>
-                          </section>
-                        );
-                      })}
-                    {(curation.unusedPhotoIds?.length ?? 0) > 0 && (
-                      <section className="border-t border-dashed border-gray-200 pt-6">
-                        <h3 className="font-sans text-sm font-bold text-gray-500">未编入故事线的照片</h3>
-                        <ul className="mt-2 font-sans text-[11px] text-gray-500 list-disc pl-4 space-y-1">
-                          {curation.unusedPhotoIds!.map(id => {
-                            const p = photoById.get(id);
-                            return p ? <li key={id}>{p.locationName}</li> : null;
-                          })}
-                        </ul>
-                      </section>
-                    )}
-                  </div>
-                </>
+                  <StoryBook
+                    curation={curation}
+                    itinerary={itinerary}
+                    photosForPost={photosForPost}
+                    photosById={photoById}
+                    onCopyCaption={copyCaption}
+                  />
+                </div>
               )}
             </motion.div>
           )}

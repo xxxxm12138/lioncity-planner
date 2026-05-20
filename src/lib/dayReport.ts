@@ -11,35 +11,40 @@ export type DayReportInput = {
   photosById: Map<string, Photo>;
 };
 
-function photoLabel(photo: Photo, indexInGroup: number): string {
-  const name = photo.locationName || '照片';
-  return `图 ${indexInGroup + 1} · ${name}`;
+function photoGridHtml(photos: Photo[]): string {
+  if (!photos.length) return '';
+  const cells = photos
+    .map(
+      p =>
+        `<figure><img src="${p.url}" alt="${escapeHtml(p.locationName || '')}" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`
+    )
+    .join('');
+  const layout =
+    photos.length === 1
+      ? 'solo'
+      : photos.length === 2
+        ? 'duo'
+        : photos.length === 3
+          ? 'trio'
+          : photos.length === 4
+            ? 'quad'
+            : 'album';
+  return `<div class="spread-photos spread-photos--${layout}">${cells}</div>`;
 }
 
-function buildPostSection(post: CuratedPost, photos: Photo[]): string {
-  const photoLines = photos
-    .map((p, i) => `<li>${photoLabel(p, i)}</li>`)
-    .join('');
-  const tags = post.hashtags?.length ? `<p class="tags">${post.hashtags.join(' ')}</p>` : '';
-  const note = post.collageRationale || post.layoutHint || '';
+function buildPostSection(post: CuratedPost, photos: Photo[], chapter: number): string {
+  const tags = post.hashtags?.length ? `<p class="tags">${escapeHtml(post.hashtags.join(' '))}</p>` : '';
+  const note = [post.collageRationale, post.layoutHint].filter(Boolean).join(' ');
+  const epigraph = [post.timeSlot, post.theme, post.mood].filter(Boolean).map(escapeHtml).join(' · ');
   return `
-    <section class="post">
-      <header>
-        <span class="order">故事线 #${post.storylineOrder}</span>
-        <h3>${escapeHtml(post.title)}</h3>
-        <p class="meta">${escapeHtml(post.theme)} · ${escapeHtml(post.timeSlot)} · ${escapeHtml(post.scene)} · ${escapeHtml(post.mood)}</p>
-      </header>
-      <div class="note">
-        <strong>本组照片（${photos.length} 张）</strong>
-        <ul>${photoLines || '<li>（无匹配照片）</li>'}</ul>
-      </div>
-      ${note ? `<div class="pairing"><strong>编组说明</strong><p>${escapeHtml(note)}</p></div>` : ''}
-      <div class="caption-block">
-        <strong>配文参考</strong>
-        <p>${escapeHtml(post.caption)}</p>
-        ${tags}
-      </div>
-      ${photos.length ? `<div class="thumbs">${photos.map(p => `<img src="${p.url}" alt="" />`).join('')}</div>` : ''}
+    <section class="spread">
+      <div class="spread-head"><span class="chapter">Chapter ${chapter}</span></div>
+      <h3>${escapeHtml(post.title)}</h3>
+      <p class="epigraph">${epigraph}</p>
+      ${photoGridHtml(photos)}
+      ${note ? `<blockquote class="whisper">${escapeHtml(note)}</blockquote>` : ''}
+      <p class="verse">${escapeHtml(post.caption)}</p>
+      ${tags}
     </section>
   `;
 }
@@ -59,11 +64,11 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
   const sorted = [...curation.posts].sort((a, b) => a.storylineOrder - b.storylineOrder);
 
   const sections = sorted
-    .map(post => {
+    .map((post, i) => {
       const photos = post.photoIds
         .map(id => photosById.get(id))
         .filter((p): p is Photo => Boolean(p));
-      return buildPostSection(post, photos);
+      return buildPostSection(post, photos, i + 1);
     })
     .join('');
 
@@ -72,44 +77,67 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
     .filter((p): p is Photo => Boolean(p));
   const unusedBlock =
     unused.length > 0
-      ? `<section class="unused"><h2>未编入故事线的照片</h2><ul>${unused.map((p, i) => `<li>${photoLabel(p, i)}</li>`).join('')}</ul></section>`
+      ? `<footer class="orphans"><p class="orphans-label">散页</p><div class="orphans-grid">${unused.map(p => `<figure><img src="${p.url}" alt="" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`).join('')}</div></footer>`
       : '';
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <title>Day ${curation.day} 旅行故事线报告</title>
+  <title>Day ${curation.day} · ${escapeHtml(dayTitle)}</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: "PingFang SC", "Inter", sans-serif; background: #f9f7f2; color: #1a1a1a; margin: 0; padding: 40px 24px; line-height: 1.6; }
-    .wrap { max-width: 720px; margin: 0 auto; }
-    h1 { font-family: Georgia, serif; font-size: 2rem; color: #c52f2f; margin: 0 0 8px; }
-    .lead { color: #666; font-size: 0.95rem; margin-bottom: 32px; }
-    .summary { background: #fff; border: 1px solid #e5e1d8; border-radius: 12px; padding: 20px; margin-bottom: 28px; }
-    .post { background: #fff; border: 1px solid #e5e1d8; border-radius: 12px; padding: 20px; margin-bottom: 20px; page-break-inside: avoid; }
-    .order { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #c52f2f; }
-    h3 { font-family: Georgia, serif; margin: 8px 0 4px; font-size: 1.25rem; }
-    .meta { font-size: 0.8rem; color: #888; margin: 0; }
-    .note ul { margin: 8px 0 0; padding-left: 1.2rem; }
-    .pairing { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; }
-    .caption-block { margin-top: 12px; font-size: 0.9rem; }
-    .tags { color: #c52f2f; font-size: 0.8rem; margin-top: 6px; }
-    .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 12px; }
-    .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; }
-    .unused { margin-top: 32px; padding-top: 20px; border-top: 1px dashed #e5e1d8; }
-    footer { margin-top: 40px; font-size: 0.75rem; color: #aaa; text-align: center; }
-    @media print { body { padding: 16px; } .post { break-inside: avoid; } }
+    body { font-family: "Playfair Display", Georgia, "PingFang SC", serif; background: #f9f7f2; color: #1a1a1a; margin: 0; padding: 48px 28px; line-height: 1.65; }
+    .wrap { max-width: 680px; margin: 0 auto; }
+    .cover { text-align: center; padding-bottom: 48px; margin-bottom: 48px; border-bottom: 1px solid #e5e1d8; }
+    .series { font-family: Inter, sans-serif; font-size: 0.65rem; letter-spacing: 0.28em; text-transform: uppercase; color: #c52f2f; font-weight: 600; }
+    .day { font-family: Inter, sans-serif; font-size: 0.7rem; letter-spacing: 0.2em; color: #999; margin: 12px 0 8px; }
+    h1 { font-size: 2.4rem; font-weight: 400; margin: 0; letter-spacing: -0.02em; }
+    .vibe { font-family: Inter, sans-serif; font-size: 0.8rem; color: #888; font-style: italic; margin-top: 12px; }
+    .rule { width: 48px; height: 1px; background: #c52f2f; margin: 28px auto; opacity: 0.5; }
+    .lead { font-size: 1.05rem; font-style: italic; color: #444; line-height: 1.85; max-width: 520px; margin: 0 auto; }
+    .spread { margin-bottom: 56px; page-break-inside: avoid; }
+    .chapter { font-family: Inter, sans-serif; font-size: 0.6rem; letter-spacing: 0.22em; text-transform: uppercase; color: #c52f2f; font-weight: 600; }
+    h3 { font-size: 1.6rem; font-weight: 400; margin: 8px 0 6px; }
+    .epigraph { font-family: Inter, sans-serif; font-size: 0.72rem; color: #888; margin: 0 0 20px; }
+    .spread-photos { display: grid; gap: 6px; margin-bottom: 20px; }
+    .spread-photos figure { margin: 0; overflow: hidden; background: #ebe6dc; position: relative; }
+    .spread-photos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .spread-photos figcaption { font-family: Inter, sans-serif; font-size: 0.55rem; position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 6px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,0.5)); }
+    .spread-photos--solo figure { aspect-ratio: 4/5; max-height: 420px; }
+    .spread-photos--duo { grid-template-columns: 1fr 1fr; }
+    .spread-photos--duo figure { aspect-ratio: 3/4; }
+    .spread-photos--trio { grid-template-columns: 1.15fr 0.85fr; }
+    .spread-photos--trio figure:first-child { grid-row: span 2; min-height: 280px; }
+    .spread-photos--quad { grid-template-columns: 1fr 1fr; }
+    .spread-photos--quad figure { aspect-ratio: 1; }
+    .spread-photos--album { grid-template-columns: repeat(3, 1fr); }
+    .spread-photos--album figure { aspect-ratio: 1; }
+    .whisper { margin: 0 0 16px; padding-left: 14px; border-left: 2px solid #e5e1d8; font-style: italic; color: #666; font-size: 0.92rem; }
+    .verse { font-size: 1rem; line-height: 1.9; margin: 0; white-space: pre-wrap; }
+    .tags { font-family: Inter, sans-serif; font-size: 0.65rem; color: #c52f2f; opacity: 0.8; margin-top: 12px; letter-spacing: 0.06em; }
+    .orphans { margin-top: 48px; padding-top: 32px; border-top: 1px dashed #e5e1d8; text-align: center; }
+    .orphans-label { font-family: Inter, sans-serif; font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: #aaa; }
+    .orphans-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 16px; }
+    .orphans-grid figure { width: 72px; margin: 0; }
+    .orphans-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+    .colophon { text-align: center; font-family: Inter, sans-serif; font-size: 0.6rem; letter-spacing: 0.25em; color: #ccc; margin-top: 48px; }
+    @media print { body { padding: 16px; } .spread { break-inside: avoid; } }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>${escapeHtml(dayTitle)}</h1>
-    <p class="lead">LionCity Planner · 第 ${curation.day} 天故事线完整报告${vibe ? ` · ${escapeHtml(vibe)}` : ''}</p>
-    <div class="summary"><strong>整日摘要</strong><p>${escapeHtml(curation.summary)}</p></div>
+    <header class="cover">
+      <p class="series">LionCity · Travel Folio</p>
+      <p class="day">Day ${String(curation.day).padStart(2, '0')}</p>
+      <h1>${escapeHtml(dayTitle)}</h1>
+      ${vibe ? `<p class="vibe">${escapeHtml(vibe)}</p>` : ''}
+      <div class="rule"></div>
+      <p class="lead">${escapeHtml(curation.summary)}</p>
+    </header>
     ${sections}
     ${unusedBlock}
-    <footer>按故事线顺序生成 · ${new Date().toLocaleString('zh-CN')}</footer>
+    <p class="colophon">— 狮城行记 · ${new Date().getFullYear()} —</p>
   </div>
 </body>
 </html>`;

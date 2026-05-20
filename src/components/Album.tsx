@@ -9,7 +9,14 @@ import { Itinerary, Photo, CuratedPost, PhotoCurationResult, PostFormat } from '
 import { Camera, Download, Upload, X, BookOpen, Grid3X3, Plus, MapPin, Trash2, Image as AlbumPosterIcon, Sparkles, Loader2, Copy } from 'lucide-react';
 import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
-import { exportCollagePoster, exportCuratedCollage, exportMono, exportTextCard, COLLAGE_LAYOUT_LABELS } from '../lib/posterExport';
+import {
+  exportCuratedCollage,
+  exportMono,
+  exportTextCard,
+  COLLAGE_LAYOUT_LABELS,
+  pickAutoCollageLayout,
+} from '../lib/posterExport';
+import type { CollageLayout } from '../types';
 
 const FORMAT_LABELS: Record<PostFormat, string> = {
   grid: '九宫格',
@@ -18,6 +25,24 @@ const FORMAT_LABELS: Record<PostFormat, string> = {
   text_card: '文案卡片',
   single_hero: '封面大片',
 };
+
+const POSTER_FRIENDLY_LAYOUTS: CollageLayout[] = [
+  'blur_bg_stack',
+  'blur_bg_scatter',
+  'hero_2x2',
+  'filmstrip',
+  'triptych_vertical',
+  'grid_3x3',
+  'single_hero',
+  'duo_balance',
+];
+
+function isPosterFriendlyPost(post: CuratedPost): boolean {
+  if (post.photoIds.length === 0) return false;
+  if (post.format === 'mono' || post.format === 'text_card') return false;
+  if (post.format === 'poster' || post.format === 'single_hero') return true;
+  return POSTER_FRIENDLY_LAYOUTS.includes(post.collageLayout);
+}
 
 interface AlbumProps {
   itinerary: Itinerary;
@@ -35,6 +60,9 @@ export default function Album(props?: AlbumProps) {
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([]);
   const [view, setView] = useState<'gallery' | 'grid' | 'poster' | 'curate'>('gallery');
   const [posterGenerating, setPosterGenerating] = useState(false);
+  const [posterLayout, setPosterLayout] = useState<CollageLayout | 'auto'>('auto');
+  const [posterTitle, setPosterTitle] = useState('Singapore Memory');
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [curating, setCurating] = useState(false);
   const [curateProgress, setCurateProgress] = useState<{ current: number; total: number } | null>(null);
   const [curation, setCuration] = useState<PhotoCurationResult | null>(null);
@@ -106,15 +134,20 @@ export default function Album(props?: AlbumProps) {
     });
   };
 
+  const effectivePosterLayout =
+    posterLayout === 'auto' ? pickAutoCollageLayout(selectedPhotos.length) : posterLayout;
+
   const downloadPoster = useCallback(async () => {
     if (selectedPhotos.length === 0) return;
     setPosterGenerating(true);
     try {
-      await exportCollagePoster(selectedPhotos);
+      const layout =
+        posterLayout === 'auto' ? pickAutoCollageLayout(selectedPhotos.length) : posterLayout;
+      await exportCuratedCollage(selectedPhotos, layout, posterTitle);
     } finally {
       setPosterGenerating(false);
     }
-  }, [selectedPhotos]);
+  }, [selectedPhotos, posterLayout, posterTitle]);
 
   const runCurate = async () => {
     if (dayPhotos.length === 0) return;
@@ -141,7 +174,19 @@ export default function Album(props?: AlbumProps) {
     post.photoIds.map(id => photoById.get(id)).filter((p): p is Photo => Boolean(p));
 
   const applyPostToSelection = (post: CuratedPost) => {
-    setSelectedPhotos(photosForPost(post));
+    setSelectedPhotos(photosForPost(post).slice(0, 9));
+  };
+
+  const goToPosterFromPost = (post: CuratedPost) => {
+    const photos = photosForPost(post);
+    if (photos.length === 0) return;
+    setSelectedPhotos(photos.slice(0, 9));
+    setPosterLayout(post.collageLayout);
+    setPosterTitle(post.title);
+    setView('poster');
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
   };
 
   const copyCaption = (post: CuratedPost) => {
@@ -195,7 +240,7 @@ export default function Album(props?: AlbumProps) {
   const CELLS = Array.from({ length: 9 }, (_, i) => i);
 
   return (
-    <div className="w-full h-full overflow-y-auto bg-editorial-bg font-serif">
+    <motion.div ref={scrollRef} className="w-full h-full overflow-y-auto bg-editorial-bg font-serif">
       {/* Sticky header */}
       <div className="sticky top-0 z-20 bg-editorial-bg/95 backdrop-blur-md border-b border-editorial-border px-4 lg:px-8 py-3 flex items-center justify-between gap-4">
         {/* Tab switcher */}
@@ -527,8 +572,29 @@ export default function Album(props?: AlbumProps) {
               ) : (
                 <div className="space-y-4">
                   <div className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
-                    <p className="text-lg font-serif text-editorial-accent tracking-tight">Singapore Memory</p>
-                    <p className="font-sans text-[11px] text-gray-400 mb-3">已选 {selectedPhotos.length} 张，点击下方生成海报</p>
+                    <p className="text-lg font-serif text-editorial-accent tracking-tight line-clamp-2">{posterTitle}</p>
+                    <p className="font-sans text-[11px] text-gray-400 mb-2">
+                      已选 {selectedPhotos.length} 张 · 推荐：
+                      <span className="text-editorial-accent font-bold">
+                        {COLLAGE_LAYOUT_LABELS[effectivePosterLayout]}
+                      </span>
+                    </p>
+                    <motion.div className="flex flex-wrap gap-1.5 mb-3">
+                      {(['auto', 'blur_bg_stack', 'blur_bg_scatter', 'hero_2x2', 'grid_3x3'] as const).map(key => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setPosterLayout(key)}
+                          className={`px-2.5 py-1 rounded-full font-sans text-[9px] font-bold border transition-colors ${
+                            posterLayout === key
+                              ? 'bg-editorial-accent text-white border-editorial-accent'
+                              : 'border-editorial-border text-gray-500 hover:border-editorial-accent'
+                          }`}
+                        >
+                          {key === 'auto' ? '自动' : COLLAGE_LAYOUT_LABELS[key]}
+                        </button>
+                      ))}
+                    </motion.div>
                     <div className="grid grid-cols-3 gap-1.5">
                       {selectedPhotos.slice(0, 9).map((photo) => (
                         <img key={photo.id} src={photo.url} alt="" className="aspect-square w-full object-cover rounded-md" />
@@ -659,6 +725,16 @@ export default function Album(props?: AlbumProps) {
                                 <motion.p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</motion.p>
                                 <motion.p className="font-sans text-[10px] text-editorial-accent/80 mb-4">{post.hashtags.join(' ')}</motion.p>
                                 <motion.div className="flex flex-wrap gap-2">
+                                  {isPosterFriendlyPost(post) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => goToPosterFromPost(post)}
+                                      className="px-3 py-1.5 rounded-full bg-editorial-accent text-white font-sans text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                    >
+                                      <AlbumPosterIcon className="w-3 h-3" />
+                                      去生成海报
+                                    </button>
+                                  )}
                                   <button type="button" onClick={() => applyPostToSelection(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent hover:text-editorial-accent">载入九宫格</button>
                                   <button type="button" onClick={() => copyCaption(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"><Copy className="w-3 h-3" /> 复制文案</button>
                                   <button type="button" onClick={() => exportCuratedPost(post)} disabled={posterGenerating} className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50">
@@ -680,6 +756,6 @@ export default function Album(props?: AlbumProps) {
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }

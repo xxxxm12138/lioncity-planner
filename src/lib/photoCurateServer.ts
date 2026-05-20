@@ -14,6 +14,8 @@ const COLLAGE_LAYOUTS: CollageLayout[] = [
   'duo_balance',
   'filmstrip',
   'single_hero',
+  'blur_bg_stack',
+  'blur_bg_scatter',
 ];
 
 function parseCollageLayout(value: string | undefined, format: PostFormat, count: number): CollageLayout {
@@ -21,9 +23,9 @@ function parseCollageLayout(value: string | undefined, format: PostFormat, count
   if (COLLAGE_LAYOUTS.includes(v)) return v;
   if (format === 'single_hero' || count === 1) return 'single_hero';
   if (count === 2) return 'duo_balance';
-  if (count <= 3) return 'triptych_vertical';
-  if (count <= 5) return 'hero_2x2';
-  if (count <= 5 && format === 'poster') return 'filmstrip';
+  if (count === 3) return 'blur_bg_stack';
+  if (count <= 5 && (format === 'poster' || format === 'grid')) return 'blur_bg_scatter';
+  if (count <= 5) return 'blur_bg_scatter';
   if (count >= 6 || format === 'grid') return 'grid_3x3';
   return 'hero_2x2';
 }
@@ -264,13 +266,15 @@ ${priorContext}
 5. **每条照片数**：1–9 张，photoIndices 使用全局编号 ${globalOffset}..${globalEnd}，不重复、不遗漏（本批尽量覆盖）。
 
 ## 拼图方案（collageLayout + collageRationale）
-为每条选择最合适的 collageLayout：
+为每条选择最合适的 collageLayout（优先创意拼图，避免千篇一律）：
+- blur_bg_stack：2–3 张，选一张横图作模糊背景，其余照片以白边卡片微旋转叠放
+- blur_bg_scatter：4–5 张，模糊背景 + 多张照片散落排布（有层次、有阴影）
 - grid_3x3：6–9 张、色调统一的多图九宫格
-- hero_2x2：5 张，1 张主图 + 4 小图（主图选最有故事感的一张）
-- triptych_vertical：2–3 张，竖构图或系列感强的照片
-- duo_balance：2 张，典型「人 + 景」或「近 + 远」对比
-- filmstrip：4–5 张，横向叙事、街拍序列
-- single_hero：1 张大片封面
+- hero_2x2：5–8 张，1 张主图 + 4 小图
+- duo_balance：2 张，「人 + 景」或「近 + 远」
+- filmstrip：4–5 张横向胶片条
+- single_hero：1 张大片
+- triptych_vertical：仅当三张均为竖构图系列照时使用
 
 collageRationale 用中文写清：主图是哪张（用 global_index）、为何这样拼、色调/人景如何搭配（2–4 句）。
 layoutHint 可补充微信九宫格第几格放主图等细节。

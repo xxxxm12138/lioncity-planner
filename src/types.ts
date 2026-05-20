@@ -34,7 +34,9 @@ export type CollageLayout =
   | 'triptych_vertical'
   | 'duo_balance'
   | 'filmstrip'
-  | 'single_hero';
+  | 'single_hero'
+  | 'blur_bg_stack'
+  | 'blur_bg_scatter';
 
 export interface CuratedPost {
   id: string;

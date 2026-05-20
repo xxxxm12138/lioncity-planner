@@ -31,8 +31,9 @@ function demoCurate(photos: Photo[], day: number): PhotoCurationResult {
     const collageLayout: CollageLayout =
       format === 'single_hero' || slice.length === 1 ? 'single_hero' :
       slice.length === 2 ? 'duo_balance' :
-      slice.length <= 3 ? 'triptych_vertical' :
-      slice.length <= 5 ? 'hero_2x2' : 'grid_3x3';
+      slice.length === 3 ? 'blur_bg_stack' :
+      slice.length <= 5 ? 'blur_bg_scatter' :
+      slice.length <= 8 ? 'hero_2x2' : 'grid_3x3';
     posts.push({
       id: `demo-${order}`,
       title: `第 ${order} 条 · ${slice[0].locationName || '旅途片段'}`,

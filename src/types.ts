@@ -27,9 +27,22 @@ export interface Photo {
 /** How this group should be published on social (WeChat Moments, etc.) */
 export type PostFormat = 'grid' | 'poster' | 'mono' | 'text_card' | 'single_hero';
 
+/** Recommended collage layout for export */
+export type CollageLayout =
+  | 'grid_3x3'
+  | 'hero_2x2'
+  | 'triptych_vertical'
+  | 'duo_balance'
+  | 'filmstrip'
+  | 'single_hero';
+
 export interface CuratedPost {
   id: string;
   title: string;
+  /** 主题：美食 / 建筑 / 自然 / 人物 / 酒店 / 交通 / 夜景 等 */
+  theme: string;
+  /** 时间线：如「上午」「午后」「傍晚」「夜间」 */
+  timeSlot: string;
   scene: string;
   mood: string;
   storylineOrder: number;
@@ -37,6 +50,9 @@ export interface CuratedPost {
   caption: string;
   hashtags: string[];
   photoIds: string[];
+  collageLayout: CollageLayout;
+  /** 拼图方案说明：色调、人景搭配、主图位置等 */
+  collageRationale: string;
   layoutHint?: string;
 }
 

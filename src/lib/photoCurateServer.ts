@@ -5,7 +5,28 @@
  */
 
 import { GoogleGenAI, Type } from '@google/genai';
-import { Photo, PostFormat, CuratedPost } from '../types';
+import { Photo, PostFormat, CuratedPost, CollageLayout } from '../types';
+
+const COLLAGE_LAYOUTS: CollageLayout[] = [
+  'grid_3x3',
+  'hero_2x2',
+  'triptych_vertical',
+  'duo_balance',
+  'filmstrip',
+  'single_hero',
+];
+
+function parseCollageLayout(value: string | undefined, format: PostFormat, count: number): CollageLayout {
+  const v = (value || '').trim() as CollageLayout;
+  if (COLLAGE_LAYOUTS.includes(v)) return v;
+  if (format === 'single_hero' || count === 1) return 'single_hero';
+  if (count === 2) return 'duo_balance';
+  if (count <= 3) return 'triptych_vertical';
+  if (count <= 5) return 'hero_2x2';
+  if (count <= 5 && format === 'poster') return 'filmstrip';
+  if (count >= 6 || format === 'grid') return 'grid_3x3';
+  return 'hero_2x2';
+}
 
 export type PhotoPayload = {
   id: string;
@@ -24,6 +45,8 @@ const schema = {
         type: Type.OBJECT,
         properties: {
           title: { type: Type.STRING },
+          theme: { type: Type.STRING },
+          timeSlot: { type: Type.STRING },
           scene: { type: Type.STRING },
           mood: { type: Type.STRING },
           storylineOrder: { type: Type.INTEGER },
@@ -31,6 +54,11 @@ const schema = {
             type: Type.STRING,
             enum: ['grid', 'poster', 'mono', 'text_card', 'single_hero'],
           },
+          collageLayout: {
+            type: Type.STRING,
+            enum: COLLAGE_LAYOUTS,
+          },
+          collageRationale: { type: Type.STRING },
           caption: { type: Type.STRING },
           hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
           photoIndices: {
@@ -39,7 +67,19 @@ const schema = {
           },
           layoutHint: { type: Type.STRING },
         },
-        required: ['title', 'scene', 'mood', 'storylineOrder', 'format', 'caption', 'photoIndices'],
+        required: [
+          'title',
+          'theme',
+          'timeSlot',
+          'scene',
+          'mood',
+          'storylineOrder',
+          'format',
+          'collageLayout',
+          'collageRationale',
+          'caption',
+          'photoIndices',
+        ],
       },
     },
   },
@@ -48,10 +88,14 @@ const schema = {
 
 type RawPost = {
   title: string;
+  theme?: string;
+  timeSlot?: string;
   scene: string;
   mood: string;
   storylineOrder: number;
   format: PostFormat;
+  collageLayout?: string;
+  collageRationale?: string;
   caption: string;
   hashtags: string[];
   photoIndices: number[];
@@ -131,9 +175,12 @@ function fallbackBatchPosts(
     if (photoIds.length === 0) break;
 
     const first = allPhotoMeta[globals[0]];
+    const collageLayout = parseCollageLayout(undefined, format, photoIds.length);
     posts.push({
       id: `fallback-${globalOffset}-${order}`,
       title: `第 ${order} 条 · ${first?.locationName || '旅途片段'}`,
+      theme: '旅途随拍',
+      timeSlot: order <= 2 ? '上午' : order <= 4 ? '午后' : '傍晚',
       scene: '自动分组',
       mood: order % 2 === 0 ? '明亮纪实' : '电影感',
       storylineOrder: order,
@@ -143,7 +190,10 @@ function fallbackBatchPosts(
         `Day ${first?.day ?? 1} · ${first?.locationName || '新加坡'} 的一段记忆。`,
       hashtags: ['#新加坡旅行', '#狮城', '#朋友圈'],
       photoIds,
-      layoutHint: format === 'grid' ? '九宫格主图放第一张' : undefined,
+      collageLayout,
+      collageRationale:
+        '同组照片色调接近；人物照与空景/建筑照搭配，避免连续多张自拍。',
+      layoutHint: format === 'grid' ? '九宫格：主图放第 1 格，其余按明暗交错' : undefined,
     });
     local += count;
     order += 1;
@@ -197,7 +247,7 @@ export async function curateBatchOnServer(params: {
   }));
 
   const prompt = `
-你是旅行摄影编辑 + 社交媒体运营。请按「场景相似」「色调/情绪」「故事线顺序」整理成多条朋友圈发布方案。
+你是资深旅行摄影编辑 + 朋友圈视觉策划。请根据图片内容，按【主题】与【时间线】拆分发布方案，并为每条给出可执行的【拼图方案】。
 
 行程背景: ${tripContext || '新加坡自由行'}
 
@@ -206,13 +256,34 @@ ${totalBatches > 1 ? `
 ${priorContext}
 ` : ''}
 
-要求：
-1. 相似场景放在同一条 post。
-2. storylineOrder 本批内从早到晚。
-3. format: grid | poster | mono | text_card | single_hero
-4. caption 中文 1~3 句；hashtags 3~5 个。
-5. photoIndices 用全局编号 ${globalOffset}..${globalEnd}，每条 1~9 张，不重复。
-6. 只返回 JSON。
+## 分组原则（必须遵守）
+1. **主题 theme**：每条只围绕一个主题，例如：美食、建筑地标、自然海滨、人物肖像、酒店入住、交通街景、夜景霓虹、购物市集。不要混搭无关主题。
+2. **时间线 timeSlot**：根据画面光线/活动推断：清晨/上午/午后/傍晚/夜间。storylineOrder 按时间从早到晚排序。
+3. **色调和谐**：同一条内照片色温、饱和度、明暗风格尽量统一；避免一条里同时出现冷色夜景与暖色黄昏。
+4. **人景搭配**：若含人物，建议「人物 + 环境」组合发布；人像作主图时配 1–2 张环境空镜；避免连续 3 张以上大头照。纯风景条目不强行塞入人像。
+5. **每条照片数**：1–9 张，photoIndices 使用全局编号 ${globalOffset}..${globalEnd}，不重复、不遗漏（本批尽量覆盖）。
+
+## 拼图方案（collageLayout + collageRationale）
+为每条选择最合适的 collageLayout：
+- grid_3x3：6–9 张、色调统一的多图九宫格
+- hero_2x2：5 张，1 张主图 + 4 小图（主图选最有故事感的一张）
+- triptych_vertical：2–3 张，竖构图或系列感强的照片
+- duo_balance：2 张，典型「人 + 景」或「近 + 远」对比
+- filmstrip：4–5 张，横向叙事、街拍序列
+- single_hero：1 张大片封面
+
+collageRationale 用中文写清：主图是哪张（用 global_index）、为何这样拼、色调/人景如何搭配（2–4 句）。
+layoutHint 可补充微信九宫格第几格放主图等细节。
+
+## 发布形式 format
+grid | poster | mono | text_card | single_hero — 与 collageLayout 协调。
+
+## 文案
+caption 中文 1~3 句；hashtags 3~5 个。
+
+summary 字段：概括本批按主题/时间线如何划分（1–2 句）。
+
+只返回 JSON。
 `;
 
   const parts = [{ text: prompt }, ...imageParts.flatMap(p => [{ text: p.text }, { inlineData: p.inlineData }])];
@@ -244,9 +315,12 @@ ${priorContext}
         .slice(0, 9);
       indices.forEach(ix => usedGlobal.add(ix));
       const photoIds = indices.map(ix => allPhotoMeta[ix]?.id).filter(Boolean) as string[];
+      const collageLayout = parseCollageLayout(p.collageLayout, p.format, photoIds.length);
       return {
         id: `curate-batch-${globalOffset}-${i}`,
         title: p.title,
+        theme: p.theme || '旅途随拍',
+        timeSlot: p.timeSlot || '全天',
         scene: p.scene,
         mood: p.mood,
         storylineOrder: p.storylineOrder,
@@ -254,6 +328,10 @@ ${priorContext}
         caption: p.caption,
         hashtags: p.hashtags || [],
         photoIds,
+        collageLayout,
+        collageRationale:
+          p.collageRationale ||
+          '同组色调统一；人物与环境照搭配，主图选故事感最强的一张。',
         layoutHint: p.layoutHint,
       };
     })

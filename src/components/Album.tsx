@@ -9,7 +9,7 @@ import { Itinerary, Photo, CuratedPost, PhotoCurationResult, PostFormat } from '
 import { Camera, Download, Upload, X, BookOpen, Grid3X3, Plus, MapPin, Trash2, Image as AlbumPosterIcon, Sparkles, Loader2, Copy } from 'lucide-react';
 import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
-import { exportCollagePoster, exportMono, exportTextCard } from '../lib/posterExport';
+import { exportCollagePoster, exportCuratedCollage, exportMono, exportTextCard, COLLAGE_LAYOUT_LABELS } from '../lib/posterExport';
 
 const FORMAT_LABELS: Record<PostFormat, string> = {
   grid: '九宫格',
@@ -156,11 +156,15 @@ export default function Album(props?: AlbumProps) {
     try {
       switch (post.format) {
         case 'grid':
-          photos.forEach((p, i) => setTimeout(() => downloadPhoto(p, i), i * 250));
+          if (post.collageLayout === 'grid_3x3' && photos.length >= 4) {
+            await exportCuratedCollage(photos, 'grid_3x3', post.title);
+          } else {
+            photos.forEach((p, i) => setTimeout(() => downloadPhoto(p, i), i * 250));
+          }
           break;
         case 'poster':
         case 'single_hero':
-          await exportCollagePoster(photos, post.title);
+          await exportCuratedCollage(photos, post.collageLayout, post.title);
           break;
         case 'mono':
           for (let i = 0; i < photos.length; i++) await exportMono(photos[i], i);
@@ -168,11 +172,25 @@ export default function Album(props?: AlbumProps) {
         case 'text_card':
           await exportTextCard(photos[0], post.caption, 0);
           break;
+        default:
+          await exportCuratedCollage(photos, post.collageLayout, post.title);
       }
     } finally {
       setPosterGenerating(false);
     }
   };
+
+  const curationGroups = useMemo(() => {
+    if (!curation?.posts.length) return [];
+    const groups: { theme: string; posts: CuratedPost[] }[] = [];
+    for (const post of curation.posts) {
+      const theme = post.theme || '其他';
+      const last = groups[groups.length - 1];
+      if (last?.theme === theme) last.posts.push(post);
+      else groups.push({ theme, posts: [post] });
+    }
+    return groups;
+  }, [curation]);
 
   const CELLS = Array.from({ length: 9 }, (_, i) => i);
 
@@ -541,7 +559,7 @@ export default function Album(props?: AlbumProps) {
               <motion.div className="bg-white border border-editorial-border rounded-2xl p-5">
                 <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold mb-2">AI 旅行社交编排</p>
                 <p className="text-sm text-gray-600 leading-relaxed">
-                  把当天全部照片上传后，点「分析第 N 天」。系统会按场景相似、色调情绪、故事线顺序拆成多条朋友圈方案，并建议九宫格、海报、黑白或文案卡。
+                  上传当天照片后点「分析」。AI 会按<strong>主题</strong>（美食/地标/人物/夜景等）与<strong>时间线</strong>（上午→傍晚）分组，并给出<strong>拼图方案</strong>（色调和谐、人景搭配、主图位置），可一键导出拼图。
                 </p>
                 <p className="font-sans text-[11px] text-gray-400 mt-2">当前第 {uploadDay} 天共 {dayPhotos.length} 张（超过 24 张将自动分批，请耐心等待）</p>
                 {serverHasGemini === false && (
@@ -594,31 +612,66 @@ export default function Album(props?: AlbumProps) {
                       </button>
                     </motion.div>
                   ) : (
-                  <motion.div className="space-y-4">
-                    {curation.posts.map(post => {
-                      const thumbs = photosForPost(post);
-                      return (
-                        <motion.div key={post.id} className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
-                          <motion.div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-                            <motion.div>
-                              <p className="text-lg tracking-tight">{post.title}</p>
-                              <p className="font-sans text-[10px] text-gray-400 mt-0.5">{post.scene} · {post.mood} · 故事线 #{post.storylineOrder}</p>
-                            </motion.div>
-                            <span className="font-sans text-[9px] font-bold uppercase tracking-widest bg-editorial-accent/10 text-editorial-accent px-2 py-1 rounded-full">{FORMAT_LABELS[post.format]}</span>
-                          </motion.div>
-                          <motion.div className="grid grid-cols-4 sm:grid-cols-6 gap-1 mb-3">
-                            {thumbs.map(p => <img key={p.id} src={p.url} alt="" className="aspect-square object-cover rounded-md" />)}
-                          </motion.div>
-                          <motion.p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</motion.p>
-                          <motion.p className="font-sans text-[10px] text-editorial-accent/80 mb-4">{post.hashtags.join(' ')}</motion.p>
-                          <motion.div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => applyPostToSelection(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent hover:text-editorial-accent">载入九宫格</button>
-                            <button type="button" onClick={() => copyCaption(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"><Copy className="w-3 h-3" /> 复制文案</button>
-                            <button type="button" onClick={() => exportCuratedPost(post)} disabled={posterGenerating} className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50"><Download className="w-3 h-3" /> 导出素材</button>
-                          </motion.div>
-                        </motion.div>
-                      );
-                    })}
+                  <motion.div className="space-y-6">
+                    {curationGroups.map(group => (
+                      <div key={group.theme}>
+                        <div className="flex items-center gap-2 mb-3 sticky top-24 z-10 bg-editorial-bg/90 py-1">
+                          <span className="font-sans text-[10px] font-bold uppercase tracking-widest text-white bg-editorial-accent px-3 py-1 rounded-full">
+                            主题 · {group.theme}
+                          </span>
+                          <span className="font-sans text-[10px] text-gray-400">{group.posts.length} 条时间线</span>
+                        </div>
+                        <div className="space-y-4">
+                          {group.posts.map(post => {
+                            const thumbs = photosForPost(post);
+                            return (
+                              <motion.div key={post.id} className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
+                                <motion.div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                                  <motion.div>
+                                    <p className="text-lg tracking-tight">{post.title}</p>
+                                    <p className="font-sans text-[10px] text-gray-500 mt-1">
+                                      <span className="text-editorial-accent font-bold">{post.timeSlot}</span>
+                                      {' · '}
+                                      {post.scene} · {post.mood} · 故事线 #{post.storylineOrder}
+                                    </p>
+                                  </motion.div>
+                                  <div className="flex flex-wrap gap-1 justify-end">
+                                    <span className="font-sans text-[9px] font-bold uppercase tracking-widest bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                                      {COLLAGE_LAYOUT_LABELS[post.collageLayout]}
+                                    </span>
+                                    <span className="font-sans text-[9px] font-bold uppercase tracking-widest bg-editorial-accent/10 text-editorial-accent px-2 py-1 rounded-full">
+                                      {FORMAT_LABELS[post.format]}
+                                    </span>
+                                  </div>
+                                </motion.div>
+                                <motion.div className="font-sans text-[11px] text-gray-600 bg-amber-50/80 border border-amber-100 rounded-xl p-3 mb-3 leading-relaxed">
+                                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-800/80 mb-1">拼图方案</p>
+                                  {post.collageRationale}
+                                  {post.layoutHint && (
+                                    <p className="text-gray-500 mt-1.5 text-[10px]">排版：{post.layoutHint}</p>
+                                  )}
+                                </motion.div>
+                                <motion.div className="grid grid-cols-4 sm:grid-cols-6 gap-1 mb-3">
+                                  {thumbs.map(p => (
+                                    <img key={p.id} src={p.url} alt="" className="aspect-square object-cover rounded-md" />
+                                  ))}
+                                </motion.div>
+                                <motion.p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</motion.p>
+                                <motion.p className="font-sans text-[10px] text-editorial-accent/80 mb-4">{post.hashtags.join(' ')}</motion.p>
+                                <motion.div className="flex flex-wrap gap-2">
+                                  <button type="button" onClick={() => applyPostToSelection(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent hover:text-editorial-accent">载入九宫格</button>
+                                  <button type="button" onClick={() => copyCaption(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"><Copy className="w-3 h-3" /> 复制文案</button>
+                                  <button type="button" onClick={() => exportCuratedPost(post)} disabled={posterGenerating} className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50">
+                                    <Download className="w-3 h-3" />
+                                    {posterGenerating ? '生成中…' : `导出${COLLAGE_LAYOUT_LABELS[post.collageLayout]}`}
+                                  </button>
+                                </motion.div>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </motion.div>
                   )}
                 </>

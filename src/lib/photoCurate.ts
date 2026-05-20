@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Photo, PhotoCurationResult, PostFormat, CuratedPost } from '../types';
+import { Photo, PhotoCurationResult, PostFormat, CuratedPost, CollageLayout } from '../types';
 import { photoToBase64Jpeg } from './imageUtils';
 
 /** Max images per API request. Larger sets are auto-batched. */
@@ -28,9 +28,16 @@ function demoCurate(photos: Photo[], day: number): PhotoCurationResult {
       1;
     const slice = photos.slice(idx, idx + count);
     if (slice.length === 0) break;
+    const collageLayout: CollageLayout =
+      format === 'single_hero' || slice.length === 1 ? 'single_hero' :
+      slice.length === 2 ? 'duo_balance' :
+      slice.length <= 3 ? 'triptych_vertical' :
+      slice.length <= 5 ? 'hero_2x2' : 'grid_3x3';
     posts.push({
       id: `demo-${order}`,
       title: `第 ${order} 条 · ${slice[0].locationName || '旅途片段'}`,
+      theme: order % 3 === 0 ? '人物' : order % 3 === 1 ? '地标建筑' : '美食',
+      timeSlot: order <= 2 ? '上午' : order <= 4 ? '午后' : '傍晚',
       scene: `场景 ${order}`,
       mood: order % 2 === 0 ? '明亮纪实' : '电影感',
       storylineOrder: order,
@@ -38,6 +45,8 @@ function demoCurate(photos: Photo[], day: number): PhotoCurationResult {
       caption: `Day ${day} · ${slice[0].locationName || '新加坡'} 的一段记忆。`,
       hashtags: ['#新加坡旅行', '#狮城', '#朋友圈'],
       photoIds: slice.map(p => p.id),
+      collageLayout,
+      collageRationale: '演示分组：同组色调接近，人物照与环境照搭配。',
       layoutHint: format === 'grid' ? '九宫格主图放第一张' : undefined,
     });
     idx += count;

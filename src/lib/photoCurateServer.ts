@@ -249,7 +249,7 @@ export async function curateBatchOnServer(params: {
   }));
 
   const prompt = `
-你是资深旅行摄影编辑 + 朋友圈视觉策划。请根据图片内容，按【主题】与【时间线】拆分发布方案，并为每条给出可执行的【拼图方案】。
+你是旅行故事线编辑。请根据图片内容，按【主题】与【时间线】告诉用户：哪些照片应该放在同一条朋友圈/同一段故事里，以及先后顺序。
 
 行程背景: ${tripContext || '新加坡自由行'}
 
@@ -259,33 +259,18 @@ ${priorContext}
 ` : ''}
 
 ## 分组原则（必须遵守）
-1. **主题 theme**：每条只围绕一个主题，例如：美食、建筑地标、自然海滨、人物肖像、酒店入住、交通街景、夜景霓虹、购物市集。不要混搭无关主题。
-2. **时间线 timeSlot**：根据画面光线/活动推断：清晨/上午/午后/傍晚/夜间。storylineOrder 按时间从早到晚排序。
-3. **色调和谐**：同一条内照片色温、饱和度、明暗风格尽量统一；避免一条里同时出现冷色夜景与暖色黄昏。
-4. **人景搭配**：若含人物，建议「人物 + 环境」组合发布；人像作主图时配 1–2 张环境空镜；避免连续 3 张以上大头照。纯风景条目不强行塞入人像。
-5. **每条照片数**：1–9 张，photoIndices 使用全局编号 ${globalOffset}..${globalEnd}，不重复、不遗漏（本批尽量覆盖）。
+1. **主题 theme**：每条只围绕一个主题（美食、建筑地标、自然、人物、酒店、街景、夜景等），不要混搭无关主题。
+2. **时间线 timeSlot**：清晨/上午/午后/傍晚/夜间。storylineOrder 按时间从早到晚。
+3. **编组逻辑**：同条内照片场景、色调、情绪相近；人物照与环境照合理搭配，说明为何放一起。
+4. **photoIndices**：使用全局编号 ${globalOffset}..${globalEnd}，每条 1–9 张，不重复，本批尽量覆盖。
 
-## 拼图方案（collageLayout + collageRationale）
-为每条选择最合适的 collageLayout（优先创意拼图，避免千篇一律）：
-- blur_bg_stack：2–3 张，选一张横图作模糊背景，其余照片以白边卡片微旋转叠放
-- blur_bg_scatter：4–5 张，模糊背景 + 多张照片散落排布（有层次、有阴影）
-- grid_3x3：6–9 张、色调统一的多图九宫格
-- hero_2x2：5–8 张，1 张主图 + 4 小图
-- duo_balance：2 张，「人 + 景」或「近 + 远」
-- filmstrip：4–5 张横向胶片条
-- single_hero：1 张大片
-- triptych_vertical：仅当三张均为竖构图系列照时使用
+## 字段说明
+- collageRationale：用中文写【编组说明】——哪些 global_index 放一起、顺序建议、色调/人景搭配理由（2–4 句）。不要描述拼图排版或海报设计。
+- layoutHint：可选，补充「建议第几张作主图」等简短提示。
+- collageLayout / format：填合理默认值即可（如 grid、poster），用户不再用于生成拼图。
+- caption：该条朋友圈配文参考，中文 1~3 句；hashtags 3~5 个。
 
-collageRationale 用中文写清：主图是哪张（用 global_index）、为何这样拼、色调/人景如何搭配（2–4 句）。
-layoutHint 可补充微信九宫格第几格放主图等细节。
-
-## 发布形式 format
-grid | poster | mono | text_card | single_hero — 与 collageLayout 协调。
-
-## 文案
-caption 中文 1~3 句；hashtags 3~5 个。
-
-summary 字段：概括本批按主题/时间线如何划分（1–2 句）。
+summary：概括整日如何按主题与时间线划分（1–2 句）。
 
 只返回 JSON。
 `;

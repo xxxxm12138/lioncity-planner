@@ -17,7 +17,8 @@ export const COLLAGE_LAYOUT_LABELS: Record<CollageLayout, string> = {
   blur_bg_scatter: '模糊背景 · 散落',
 };
 
-/** Pick a layout that varies by photo count (not always 3-column). */
+export type RenderCollageOptions = { preview?: boolean };
+
 export function pickAutoCollageLayout(count: number): CollageLayout {
   if (count <= 1) return 'single_hero';
   if (count === 2) return 'duo_balance';
@@ -35,6 +36,98 @@ function layoutSeed(photos: Photo[]): number {
   return s;
 }
 
+export async function renderCuratedCollageCanvas(
+  photos: Photo[],
+  layout: CollageLayout,
+  title = 'Singapore Memory',
+  options: RenderCollageOptions = {}
+): Promise<HTMLCanvasElement | null> {
+  const images = await Promise.all(photos.slice(0, 9).map(p => loadImage(p.url)));
+  if (images.length === 0) return null;
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  paintCuratedCollage(ctx, canvas, images, layout, title, layoutSeed(photos), options);
+  return canvas;
+}
+
+export async function renderCuratedCollagePreview(
+  photos: Photo[],
+  layout: CollageLayout,
+  title: string,
+  maxLongEdge = 420
+): Promise<string | null> {
+  const canvas = await renderCuratedCollageCanvas(photos, layout, title, { preview: true });
+  if (!canvas) return null;
+
+  const long = Math.max(canvas.width, canvas.height);
+  if (long <= maxLongEdge) return canvas.toDataURL('image/jpeg', 0.88);
+
+  const scale = maxLongEdge / long;
+  const small = document.createElement('canvas');
+  small.width = Math.round(canvas.width * scale);
+  small.height = Math.round(canvas.height * scale);
+  const sctx = small.getContext('2d');
+  if (!sctx) return null;
+  sctx.drawImage(canvas, 0, 0, small.width, small.height);
+  return small.toDataURL('image/jpeg', 0.88);
+}
+
+export type CollageOverviewCell = { dataUrl: string; label: string };
+
+export async function exportCollageOverviewGrid(cells: CollageOverviewCell[]) {
+  const items = cells.slice(0, 9);
+  if (items.length === 0) return;
+
+  const thumbs = await Promise.all(items.map(c => loadDataUrlImage(c.dataUrl)));
+  const cols = 3;
+  const gap = 10;
+  const size = 1080;
+  const cell = Math.floor((size - gap * (cols + 1)) / cols);
+  const rows = Math.ceil(items.length / cols);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = gap + rows * (cell + gap);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.fillStyle = '#f8f7f2';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < items.length; i++) {
+    const img = thumbs[i];
+    if (!img) continue;
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = gap + col * (cell + gap);
+    const y = gap + row * (cell + gap);
+    drawCover(ctx, img, x, y, cell, cell);
+
+    const label = items[i].label.slice(0, 14);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x, y + cell - 28, cell, 28);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(label, x + 8, y + cell - 8);
+  }
+
+  downloadDataUrl(
+    canvas.toDataURL('image/jpeg', 0.94),
+    `新加坡_拼图总览九宫格_${Date.now()}.jpg`
+  );
+}
+
+function loadDataUrlImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
 export async function exportCollagePoster(photos: Photo[], title = 'Singapore Memory') {
   const layout = pickAutoCollageLayout(photos.length);
   return exportCuratedCollage(photos, layout, title);
@@ -45,24 +138,32 @@ export async function exportCuratedCollage(
   layout: CollageLayout,
   title = 'Singapore Memory'
 ) {
-  const images = await Promise.all(photos.slice(0, 9).map(p => loadImage(p.url)));
-  if (images.length === 0) return;
+  const canvas = await renderCuratedCollageCanvas(photos, layout, title);
+  if (!canvas) return;
+  const layoutTag = COLLAGE_LAYOUT_LABELS[layout] || layout;
+  downloadDataUrl(canvas.toDataURL('image/jpeg', 0.95), `新加坡_${layoutTag}_${Date.now()}.jpg`);
+}
 
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
+function paintCuratedCollage(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  images: HTMLImageElement[],
+  layout: CollageLayout,
+  title: string,
+  seed: number,
+  options: RenderCollageOptions
+) {
   const pad = 48;
   const innerW = 1080 - pad * 2;
-  const seed = layoutSeed(photos);
+  const preview = options.preview;
 
   switch (layout) {
     case 'single_hero': {
       canvas.width = 1080;
       canvas.height = 1350;
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 72);
-      drawCover(ctx, images[0], pad, 160, innerW, 1120);
+      if (!preview) drawTitle(ctx, title, pad, 72);
+      drawCover(ctx, images[0], pad, preview ? 48 : 160, innerW, preview ? 1250 : 1120);
       break;
     }
     case 'grid_3x3': {
@@ -71,10 +172,10 @@ export async function exportCuratedCollage(
       const gap = 8;
       const cell = Math.floor((innerW - gap * (cols - 1)) / cols);
       canvas.width = pad * 2 + cell * cols + gap * (cols - 1);
-      canvas.height = pad * 2 + 80 + cell * cols + gap * (cols - 1);
+      canvas.height = pad * 2 + (preview ? 0 : 80) + cell * cols + gap * (cols - 1);
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 56);
-      const startY = 100;
+      if (!preview) drawTitle(ctx, title, pad, 56);
+      const startY = preview ? pad : 100;
       for (let i = 0; i < n; i++) {
         const col = i % cols;
         const row = Math.floor(i / cols);
@@ -87,11 +188,11 @@ export async function exportCuratedCollage(
       canvas.width = 1080;
       canvas.height = 1440;
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 72);
+      if (!preview) drawTitle(ctx, title, pad, 72);
       const gap = 12;
       const colW = (innerW - gap * (n - 1)) / n;
-      const top = 150;
-      const h = 1240;
+      const top = preview ? 48 : 150;
+      const h = preview ? 1340 : 1240;
       for (let i = 0; i < n; i++) {
         drawCover(ctx, images[i], pad + i * (colW + gap), top, colW, h);
       }
@@ -101,22 +202,24 @@ export async function exportCuratedCollage(
       canvas.width = 1080;
       canvas.height = 1200;
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 72);
+      if (!preview) drawTitle(ctx, title, pad, 72);
       const gap = 16;
       const half = (innerW - gap) / 2;
-      drawCover(ctx, images[0], pad, 140, half, 1000);
-      drawCover(ctx, images[1] || images[0], pad + half + gap, 140, half, 1000);
+      const top = preview ? 48 : 140;
+      const h = preview ? 1100 : 1000;
+      drawCover(ctx, images[0], pad, top, half, h);
+      drawCover(ctx, images[1] || images[0], pad + half + gap, top, half, h);
       break;
     }
     case 'filmstrip': {
       canvas.width = 1080;
       canvas.height = 520;
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 48);
+      if (!preview) drawTitle(ctx, title, pad, 48);
       const n = Math.min(5, images.length);
       const gap = 10;
-      const stripY = 100;
-      const stripH = 380;
+      const stripY = preview ? 40 : 100;
+      const stripH = preview ? 460 : 380;
       const tileW = (innerW - gap * (n - 1)) / n;
       for (let i = 0; i < n; i++) {
         drawCover(ctx, images[i], pad + i * (tileW + gap), stripY, tileW, stripH);
@@ -124,21 +227,21 @@ export async function exportCuratedCollage(
       break;
     }
     case 'blur_bg_stack':
-      drawBlurBgCollage(ctx, canvas, images, title, seed, 'stack');
+      drawBlurBgCollage(ctx, canvas, images, title, seed, 'stack', preview);
       break;
     case 'blur_bg_scatter':
-      drawBlurBgCollage(ctx, canvas, images, title, seed, 'scatter');
+      drawBlurBgCollage(ctx, canvas, images, title, seed, 'scatter', preview);
       break;
     case 'hero_2x2':
     default: {
       canvas.width = 1080;
       canvas.height = 1440;
       fillBg(ctx, canvas);
-      drawTitle(ctx, title, pad, 72);
-      drawCover(ctx, images[0], pad, 150, innerW, 640);
+      if (!preview) drawTitle(ctx, title, pad, 72);
+      drawCover(ctx, images[0], pad, preview ? 48 : 150, innerW, preview ? 720 : 640);
       const gap = 12;
       const tile = (innerW - gap) / 2;
-      const tileY = 820;
+      const tileY = preview ? 790 : 820;
       for (let i = 1; i <= 4; i++) {
         const img = images[i];
         const col = (i - 1) % 2;
@@ -146,7 +249,7 @@ export async function exportCuratedCollage(
         const x = pad + col * (tile + gap);
         const y = tileY + row * (tile + gap);
         if (img) drawCover(ctx, img, x, y, tile, tile);
-        else {
+        else if (!preview) {
           ctx.fillStyle = '#e8e8e8';
           ctx.fillRect(x, y, tile, tile);
         }
@@ -154,22 +257,16 @@ export async function exportCuratedCollage(
       break;
     }
   }
-
-  const layoutTag = COLLAGE_LAYOUT_LABELS[layout] || layout;
-  downloadDataUrl(
-    canvas.toDataURL('image/jpeg', 0.95),
-    `新加坡_${layoutTag}_${Date.now()}.jpg`
-  );
 }
 
-/** Blurred hero background + foreground photo cards with rotation & shadow. */
 function drawBlurBgCollage(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   images: HTMLImageElement[],
   title: string,
   seed: number,
-  mode: 'stack' | 'scatter'
+  mode: 'stack' | 'scatter',
+  preview: boolean
 ) {
   canvas.width = 1080;
   canvas.height = 1440;
@@ -177,7 +274,7 @@ function drawBlurBgCollage(
   const bgIndex = pickBackgroundIndex(images, seed);
   drawBlurredBackground(ctx, canvas, images[bgIndex]);
 
-  drawTitleOnBlur(ctx, title, 56, 88);
+  if (!preview) drawTitleOnBlur(ctx, title, 56, 88);
 
   const fg = images.map((img, i) => ({ img, i })).filter(x => x.i !== bgIndex);
   const ordered = [...fg.map(x => x.img), ...images.filter((_, i) => i === bgIndex)].slice(0, 8);
@@ -198,7 +295,7 @@ function pickBackgroundIndex(images: HTMLImageElement[], seed: number): number {
     const ratio = img.width / img.height;
     const landscape = ratio >= 1.1 ? 2 : ratio >= 0.85 ? 1 : 0;
     const area = img.width * img.height;
-    const score = landscape * 1e6 + area + (seed + i) % 7;
+    const score = landscape * 1e6 + area + ((seed + i) % 7);
     if (score > bestScore) {
       bestScore = score;
       best = i;

@@ -5,44 +5,11 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Itinerary, Photo, CuratedPost, PhotoCurationResult, PostFormat } from '../types';
-import { Camera, Download, Upload, X, BookOpen, Grid3X3, Plus, MapPin, Trash2, Image as AlbumPosterIcon, Sparkles, Loader2, Copy } from 'lucide-react';
+import { Itinerary, Photo, CuratedPost, PhotoCurationResult } from '../types';
+import { Camera, Download, Upload, BookOpen, MapPin, Sparkles, Loader2, Copy, FileText, Printer } from 'lucide-react';
 import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
-import {
-  exportCuratedCollage,
-  exportMono,
-  exportTextCard,
-  COLLAGE_LAYOUT_LABELS,
-  pickAutoCollageLayout,
-} from '../lib/posterExport';
-import type { CollageLayout } from '../types';
-
-const FORMAT_LABELS: Record<PostFormat, string> = {
-  grid: '九宫格',
-  poster: '拼贴海报',
-  mono: '黑白质感',
-  text_card: '文案卡片',
-  single_hero: '封面大片',
-};
-
-const POSTER_FRIENDLY_LAYOUTS: CollageLayout[] = [
-  'blur_bg_stack',
-  'blur_bg_scatter',
-  'hero_2x2',
-  'filmstrip',
-  'triptych_vertical',
-  'grid_3x3',
-  'single_hero',
-  'duo_balance',
-];
-
-function isPosterFriendlyPost(post: CuratedPost): boolean {
-  if (post.photoIds.length === 0) return false;
-  if (post.format === 'mono' || post.format === 'text_card') return false;
-  if (post.format === 'poster' || post.format === 'single_hero') return true;
-  return POSTER_FRIENDLY_LAYOUTS.includes(post.collageLayout);
-}
+import { buildDayReportHtml, downloadDayReportHtml, printDayReport } from '../lib/dayReport';
 
 interface AlbumProps {
   itinerary: Itinerary;
@@ -57,12 +24,7 @@ export default function Album(props?: AlbumProps) {
   const activeDay = props?.activeDay ?? 1;
   const [isDragging, setIsDragging] = useState(false);
   const [uploadDay, setUploadDay] = useState(activeDay || 1);
-  const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([]);
-  const [view, setView] = useState<'gallery' | 'grid' | 'poster' | 'curate'>('gallery');
-  const [posterGenerating, setPosterGenerating] = useState(false);
-  const [posterLayout, setPosterLayout] = useState<CollageLayout | 'auto'>('auto');
-  const [posterTitle, setPosterTitle] = useState('Singapore Memory');
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<'gallery' | 'curate' | 'report'>('gallery');
   const [curating, setCurating] = useState(false);
   const [curateProgress, setCurateProgress] = useState<{ current: number; total: number } | null>(null);
   const [curation, setCuration] = useState<PhotoCurationResult | null>(null);
@@ -104,50 +66,10 @@ export default function Album(props?: AlbumProps) {
     processFiles(Array.from(e.dataTransfer.files));
   }, [processFiles]);
 
-  const toggleSelect = (photo: Photo) => {
-    setSelectedPhotos(prev => {
-      if (prev.find(p => p.id === photo.id)) return prev.filter(p => p.id !== photo.id);
-      if (prev.length >= 9) return prev;
-      return [...prev, photo];
-    });
-  };
-
-  const removeFromGrid = (photo: Photo) => {
-    setSelectedPhotos(prev => prev.filter(p => p.id !== photo.id));
-  };
-
-  const getSelectIndex = (photo: Photo) =>
-    selectedPhotos.findIndex(p => p.id === photo.id);
-
-  const downloadPhoto = (photo: Photo, index: number) => {
-    const a = document.createElement('a');
-    a.href = photo.url;
-    a.download = `新加坡_${String(index + 1).padStart(2, '0')}.jpg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const downloadAll = () => {
-    selectedPhotos.forEach((photo, i) => {
-      setTimeout(() => downloadPhoto(photo, i), i * 250);
-    });
-  };
-
-  const effectivePosterLayout =
-    posterLayout === 'auto' ? pickAutoCollageLayout(selectedPhotos.length) : posterLayout;
-
-  const downloadPoster = useCallback(async () => {
-    if (selectedPhotos.length === 0) return;
-    setPosterGenerating(true);
-    try {
-      const layout =
-        posterLayout === 'auto' ? pickAutoCollageLayout(selectedPhotos.length) : posterLayout;
-      await exportCuratedCollage(selectedPhotos, layout, posterTitle);
-    } finally {
-      setPosterGenerating(false);
-    }
-  }, [selectedPhotos, posterLayout, posterTitle]);
+  const reportHtml = useMemo(() => {
+    if (!curation) return null;
+    return buildDayReportHtml({ curation, itinerary, photosById: photoById });
+  }, [curation, itinerary, photoById]);
 
   const runCurate = async () => {
     if (dayPhotos.length === 0) return;
@@ -161,7 +83,7 @@ export default function Album(props?: AlbumProps) {
         : itinerary.narrative?.vibe;
       const result = await curateDayPhotos(dayPhotos, uploadDay, context, p => setCurateProgress(p));
       setCuration(result);
-      setView('curate');
+      setView('report');
     } catch (e) {
       setCurateError(e instanceof Error ? e.message : '分析失败，请稍后重试');
     } finally {
@@ -173,56 +95,21 @@ export default function Album(props?: AlbumProps) {
   const photosForPost = (post: CuratedPost) =>
     post.photoIds.map(id => photoById.get(id)).filter((p): p is Photo => Boolean(p));
 
-  const applyPostToSelection = (post: CuratedPost) => {
-    setSelectedPhotos(photosForPost(post).slice(0, 9));
-  };
-
-  const goToPosterFromPost = (post: CuratedPost) => {
-    const photos = photosForPost(post);
-    if (photos.length === 0) return;
-    setSelectedPhotos(photos.slice(0, 9));
-    setPosterLayout(post.collageLayout);
-    setPosterTitle(post.title);
-    setView('poster');
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  };
-
   const copyCaption = (post: CuratedPost) => {
     const text = `${post.caption}\n\n${post.hashtags.join(' ')}`;
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  const exportCuratedPost = async (post: CuratedPost) => {
-    const photos = photosForPost(post);
-    if (photos.length === 0) return;
-    setPosterGenerating(true);
-    try {
-      switch (post.format) {
-        case 'grid':
-          if (post.collageLayout === 'grid_3x3' && photos.length >= 4) {
-            await exportCuratedCollage(photos, 'grid_3x3', post.title);
-          } else {
-            photos.forEach((p, i) => setTimeout(() => downloadPhoto(p, i), i * 250));
-          }
-          break;
-        case 'poster':
-        case 'single_hero':
-          await exportCuratedCollage(photos, post.collageLayout, post.title);
-          break;
-        case 'mono':
-          for (let i = 0; i < photos.length; i++) await exportMono(photos[i], i);
-          break;
-        case 'text_card':
-          await exportTextCard(photos[0], post.caption, 0);
-          break;
-        default:
-          await exportCuratedCollage(photos, post.collageLayout, post.title);
-      }
-    } finally {
-      setPosterGenerating(false);
-    }
+  const copyFullReportText = () => {
+    if (!curation) return;
+    const sorted = [...curation.posts].sort((a, b) => a.storylineOrder - b.storylineOrder);
+    const blocks = sorted.map(post => {
+      const photos = photosForPost(post);
+      const names = photos.map((p, i) => `图${i + 1} ${p.locationName}`).join('、');
+      return `【故事线 #${post.storylineOrder}】${post.title}\n${post.theme} · ${post.timeSlot}\n照片：${names}\n说明：${post.collageRationale}\n配文：${post.caption}\n${post.hashtags.join(' ')}`;
+    });
+    const text = [curation.summary, '', ...blocks].join('\n\n');
+    navigator.clipboard.writeText(text).catch(() => {});
   };
 
   const curationGroups = useMemo(() => {
@@ -237,10 +124,8 @@ export default function Album(props?: AlbumProps) {
     return groups;
   }, [curation]);
 
-  const CELLS = Array.from({ length: 9 }, (_, i) => i);
-
   return (
-    <motion.div ref={scrollRef} className="w-full h-full overflow-y-auto bg-editorial-bg font-serif">
+    <div className="w-full h-full overflow-y-auto overflow-x-hidden scrollbar-hide bg-editorial-bg font-serif">
       {/* Sticky header */}
       <div className="sticky top-0 z-20 bg-editorial-bg/95 backdrop-blur-md border-b border-editorial-border px-4 lg:px-8 py-3 flex items-center justify-between gap-4">
         {/* Tab switcher */}
@@ -255,29 +140,6 @@ export default function Album(props?: AlbumProps) {
             照片库
           </button>
           <button
-            onClick={() => setView('grid')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest transition-all ${
-              view === 'grid' ? 'bg-white shadow text-editorial-accent' : 'text-gray-400'
-            }`}
-          >
-            <Grid3X3 className="w-3 h-3" />
-            九宫格
-            {selectedPhotos.length > 0 && (
-              <span className="bg-editorial-accent text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none">
-                {selectedPhotos.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setView('poster')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest transition-all ${
-              view === 'poster' ? 'bg-white shadow text-editorial-accent' : 'text-gray-400'
-            }`}
-          >
-            <AlbumPosterIcon className="w-3 h-3" />
-            海报
-          </button>
-          <button
             onClick={() => setView('curate')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest transition-all ${
               view === 'curate' ? 'bg-white shadow text-editorial-accent' : 'text-gray-400'
@@ -286,12 +148,23 @@ export default function Album(props?: AlbumProps) {
             <Sparkles className="w-3 h-3" />
             智能编排
           </button>
+          <button
+            onClick={() => setView('report')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest transition-all ${
+              view === 'report' ? 'bg-white shadow text-editorial-accent' : 'text-gray-400'
+            }`}
+          >
+            <FileText className="w-3 h-3" />
+            完整报告
+          </button>
         </div>
 
         {/* Right actions */}
-        {(view === 'gallery' || view === 'curate') && (
+        {(view === 'gallery' || view === 'curate' || view === 'report') && (
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-sans text-[10px] text-gray-400 shrink-0">{view === 'curate' ? '分析' : '上传到'}</span>
+            <span className="font-sans text-[10px] text-gray-400 shrink-0">
+              {view === 'curate' ? '分析' : view === 'report' ? '报告' : '上传到'}
+            </span>
             <select
               value={uploadDay}
               onChange={e => setUploadDay(Number(e.target.value))}
@@ -309,24 +182,25 @@ export default function Album(props?: AlbumProps) {
           </div>
         )}
 
-        {view === 'grid' && selectedPhotos.length > 0 && (
-          <button
-            onClick={downloadAll}
-            className="flex items-center gap-2 bg-editorial-accent text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:opacity-90 active:scale-95 transition-all shrink-0"
-          >
-            <Download className="w-3 h-3" />
-            下载 {selectedPhotos.length} 张
-          </button>
-        )}
-        {view === 'poster' && selectedPhotos.length > 0 && (
-          <button
-            onClick={downloadPoster}
-            disabled={posterGenerating}
-            className="flex items-center gap-2 bg-editorial-text text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:opacity-90 active:scale-95 transition-all shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Download className="w-3 h-3" />
-            {posterGenerating ? '生成中...' : '下载海报'}
-          </button>
+        {view === 'report' && curation && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => reportHtml && printDayReport(reportHtml)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent"
+            >
+              <Printer className="w-3 h-3" />
+              打印
+            </button>
+            <button
+              type="button"
+              onClick={() => reportHtml && downloadDayReportHtml(reportHtml, curation.day)}
+              className="flex items-center gap-1.5 bg-editorial-text text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold"
+            >
+              <Download className="w-3 h-3" />
+              下载报告
+            </button>
+          </div>
         )}
         {view === 'curate' && (
           <button
@@ -387,7 +261,7 @@ export default function Album(props?: AlbumProps) {
                 <div className="text-center py-24">
                   <Camera className="w-14 h-14 text-gray-200 mx-auto mb-4" />
                   <p className="font-sans text-sm text-gray-400">还没有照片</p>
-                  <p className="font-sans text-[11px] text-gray-300 mt-1 italic">上传后可智能编排：按场景/故事线分组，并生成九宫格、海报、黑白、文案卡</p>
+                  <p className="font-sans text-[11px] text-gray-300 mt-1 italic">上传后可智能编排：按主题与时间线告诉你哪些照片放一起</p>
                 </div>
               ) : (
                 <div className="space-y-10">
@@ -400,38 +274,20 @@ export default function Album(props?: AlbumProps) {
                           <span className="text-4xl font-black text-editorial-accent/20 leading-none">0{day.day}</span>
                           <div>
                             <h3 className="text-xl tracking-tight leading-none">{day.title}</h3>
-                            <p className="font-sans text-[10px] text-gray-400 mt-0.5">{dayPhotos.length} 张 · 点击勾选加入九宫格</p>
+                            <p className="font-sans text-[10px] text-gray-400 mt-0.5">{dayPhotos.length} 张</p>
                           </div>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-1.5">
-                          {dayPhotos.map(photo => {
-                            const selIdx = getSelectIndex(photo);
-                            const isSelected = selIdx !== -1;
-                            const atMax = selectedPhotos.length >= 9 && !isSelected;
-                            return (
-                              <motion.div
+                          {dayPhotos.map(photo => (
+                              <div
                                 key={photo.id}
-                                whileTap={{ scale: 0.94 }}
-                                className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer group ${atMax ? 'opacity-40' : ''}`}
-                                onClick={() => !atMax && toggleSelect(photo)}
+                                className="relative aspect-square rounded-xl overflow-hidden group"
                               >
                                 <img
                                   src={photo.url}
                                   alt=""
-                                  className={`w-full h-full object-cover transition-all duration-300 ${isSelected ? 'brightness-70 scale-105' : 'group-hover:scale-105 group-hover:brightness-90'}`}
+                                  className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105 group-hover:brightness-90"
                                 />
-                                {isSelected && (
-                                  <div className="absolute inset-0 flex items-start justify-end p-1.5">
-                                    <div className="w-6 h-6 bg-editorial-accent rounded-full flex items-center justify-center text-white text-[11px] font-bold font-sans shadow-lg ring-2 ring-white">
-                                      {selIdx + 1}
-                                    </div>
-                                  </div>
-                                )}
-                                {!isSelected && !atMax && (
-                                  <div className="absolute inset-0 flex items-start justify-end p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <div className="w-6 h-6 border-2 border-white/80 rounded-full bg-black/20 backdrop-blur-sm" />
-                                  </div>
-                                )}
                                 {photo.locationName && (
                                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2 translate-y-full group-hover:translate-y-0 transition-transform">
                                     <div className="flex items-center gap-1">
@@ -440,175 +296,12 @@ export default function Album(props?: AlbumProps) {
                                     </div>
                                   </div>
                                 )}
-                              </motion.div>
-                            );
-                          })}
+                              </div>
+                          ))}
                         </div>
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {view === 'grid' && (
-            <motion.div
-              key="grid"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="max-w-sm mx-auto"
-            >
-              {selectedPhotos.length === 0 ? (
-                <div className="text-center py-16">
-                  <Grid3X3 className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                  <p className="font-sans font-bold text-sm text-gray-400">还没有选照片</p>
-                  <p className="font-sans text-[11px] text-gray-300 mt-1">去照片库点击勾选，最多选 9 张</p>
-                  <button
-                    onClick={() => setView('gallery')}
-                    className="mt-6 px-6 py-2.5 border border-editorial-border rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:border-editorial-accent hover:text-editorial-accent transition-colors"
-                  >
-                    前往照片库
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <p className="font-sans text-[10px] text-gray-400 text-center mb-5">
-                    已选 <span className="text-editorial-accent font-bold">{selectedPhotos.length}</span>/9 张 · 点 × 可移除
-                  </p>
-
-                  {/* WeChat-style 3×3 grid */}
-                  <div className="bg-[#f5f5f5] p-3 rounded-2xl shadow-inner">
-                    <div className="grid grid-cols-3 gap-1">
-                      {CELLS.map(i => {
-                        const photo = selectedPhotos[i];
-                        return (
-                          <div
-                            key={i}
-                            className={`aspect-square rounded-lg overflow-hidden relative ${!photo ? 'bg-gray-200/60 border-2 border-dashed border-gray-300' : ''}`}
-                          >
-                            {photo ? (
-                              <>
-                                <img src={photo.url} alt="" className="w-full h-full object-cover" />
-                                <button
-                                  onClick={() => removeFromGrid(photo)}
-                                  className="absolute top-1 right-1 w-5 h-5 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-black/80 transition-colors"
-                                >
-                                  <X className="w-2.5 h-2.5 text-white" />
-                                </button>
-                                <div className="absolute bottom-1 left-1 w-5 h-5 bg-editorial-accent/90 rounded-full flex items-center justify-center text-white text-[9px] font-bold font-sans">
-                                  {i + 1}
-                                </div>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => setView('gallery')}
-                                className="w-full h-full flex items-center justify-center hover:bg-gray-300/30 transition-colors"
-                              >
-                                <Plus className="w-5 h-5 text-gray-300" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Download & tips */}
-                  <div className="mt-6 space-y-3">
-                    <button
-                      onClick={downloadAll}
-                      className="w-full bg-editorial-text text-white py-4 rounded-2xl font-sans text-[11px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-black active:scale-[0.98] transition-all"
-                    >
-                      <Download className="w-4 h-4" />
-                      下载全部 {selectedPhotos.length} 张照片
-                    </button>
-
-                    <div className="bg-editorial-accent/5 border border-editorial-accent/10 rounded-xl p-4 space-y-1.5">
-                      <p className="font-sans text-[10px] font-bold text-editorial-accent uppercase tracking-widest">发朋友圈步骤</p>
-                      <p className="font-sans text-[11px] text-gray-500">① 点击上方按钮，{selectedPhotos.length} 张图片将自动下载</p>
-                      <p className="font-sans text-[11px] text-gray-500">② 打开微信 → 发现 → 朋友圈 → 相机图标</p>
-                      <p className="font-sans text-[11px] text-gray-500">③ 选择刚下载的全部照片，微信自动排成九宫格</p>
-                      {selectedPhotos.length < 9 && (
-                        <p className="font-sans text-[11px] text-editorial-accent/70 italic">
-                          · 目前选了 {selectedPhotos.length} 张，再选 {9 - selectedPhotos.length} 张可填满九宫格
-                        </p>
-                      )}
-                    </div>
-
-                    <button
-                      onClick={() => setSelectedPhotos([])}
-                      className="w-full flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-2xl font-sans text-[10px] text-gray-400 hover:border-red-200 hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      清空选择
-                    </button>
-                  </div>
-                </>
-              )}
-            </motion.div>
-          )}
-          {view === 'poster' && (
-            <motion.div
-              key="poster"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="max-w-sm mx-auto"
-            >
-              {selectedPhotos.length === 0 ? (
-                <div className="text-center py-16">
-                  <AlbumPosterIcon className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                  <p className="font-sans font-bold text-sm text-gray-400">先选照片再生成海报</p>
-                  <p className="font-sans text-[11px] text-gray-300 mt-1">去照片库勾选 1~9 张即可</p>
-                  <button
-                    onClick={() => setView('gallery')}
-                    className="mt-6 px-6 py-2.5 border border-editorial-border rounded-full font-sans text-[10px] font-bold uppercase tracking-widest hover:border-editorial-accent hover:text-editorial-accent transition-colors"
-                  >
-                    前往照片库
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
-                    <p className="text-lg font-serif text-editorial-accent tracking-tight line-clamp-2">{posterTitle}</p>
-                    <p className="font-sans text-[11px] text-gray-400 mb-2">
-                      已选 {selectedPhotos.length} 张 · 推荐：
-                      <span className="text-editorial-accent font-bold">
-                        {COLLAGE_LAYOUT_LABELS[effectivePosterLayout]}
-                      </span>
-                    </p>
-                    <motion.div className="flex flex-wrap gap-1.5 mb-3">
-                      {(['auto', 'blur_bg_stack', 'blur_bg_scatter', 'hero_2x2', 'grid_3x3'] as const).map(key => (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setPosterLayout(key)}
-                          className={`px-2.5 py-1 rounded-full font-sans text-[9px] font-bold border transition-colors ${
-                            posterLayout === key
-                              ? 'bg-editorial-accent text-white border-editorial-accent'
-                              : 'border-editorial-border text-gray-500 hover:border-editorial-accent'
-                          }`}
-                        >
-                          {key === 'auto' ? '自动' : COLLAGE_LAYOUT_LABELS[key]}
-                        </button>
-                      ))}
-                    </motion.div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {selectedPhotos.slice(0, 9).map((photo) => (
-                        <img key={photo.id} src={photo.url} alt="" className="aspect-square w-full object-cover rounded-md" />
-                      ))}
-                    </div>
-                  </div>
-                  <button
-                    onClick={downloadPoster}
-                    disabled={posterGenerating}
-                    className="w-full bg-editorial-text text-white py-4 rounded-2xl font-sans text-[11px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-black active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Download className="w-4 h-4" />
-                    {posterGenerating ? '生成海报中...' : '生成并下载朋友圈海报'}
-                  </button>
                 </div>
               )}
             </motion.div>
@@ -625,7 +318,7 @@ export default function Album(props?: AlbumProps) {
               <motion.div className="bg-white border border-editorial-border rounded-2xl p-5">
                 <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold mb-2">AI 旅行社交编排</p>
                 <p className="text-sm text-gray-600 leading-relaxed">
-                  上传当天照片后点「分析」。AI 会按<strong>主题</strong>（美食/地标/人物/夜景等）与<strong>时间线</strong>（上午→傍晚）分组，并给出<strong>拼图方案</strong>（色调和谐、人景搭配、主图位置），可一键导出拼图。
+                  上传当天照片后点「分析」。AI 会按<strong>主题</strong>与<strong>时间线</strong>告诉你<strong>哪些照片应放在同一条故事</strong>里，并说明编组理由。完成后可到「完整报告」页查看整日文档。
                 </p>
                 <p className="font-sans text-[11px] text-gray-400 mt-2">当前第 {uploadDay} 天共 {dayPhotos.length} 张（超过 24 张将自动分批，请耐心等待）</p>
                 {serverHasGemini === false && (
@@ -679,6 +372,16 @@ export default function Album(props?: AlbumProps) {
                     </motion.div>
                   ) : (
                   <motion.div className="space-y-6">
+                    {curation.posts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setView('report')}
+                        className="w-full py-3 rounded-2xl bg-editorial-text text-white font-sans text-[11px] font-bold flex items-center justify-center gap-2"
+                      >
+                        <FileText className="w-4 h-4" />
+                        查看完整故事线报告
+                      </button>
+                    )}
                     {curationGroups.map(group => (
                       <div key={group.theme}>
                         <div className="flex items-center gap-2 mb-3 sticky top-24 z-10 bg-editorial-bg/90 py-1">
@@ -701,47 +404,33 @@ export default function Album(props?: AlbumProps) {
                                       {post.scene} · {post.mood} · 故事线 #{post.storylineOrder}
                                     </p>
                                   </motion.div>
-                                  <div className="flex flex-wrap gap-1 justify-end">
-                                    <span className="font-sans text-[9px] font-bold uppercase tracking-widest bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                                      {COLLAGE_LAYOUT_LABELS[post.collageLayout]}
-                                    </span>
-                                    <span className="font-sans text-[9px] font-bold uppercase tracking-widest bg-editorial-accent/10 text-editorial-accent px-2 py-1 rounded-full">
-                                      {FORMAT_LABELS[post.format]}
-                                    </span>
-                                  </div>
                                 </motion.div>
-                                <motion.div className="font-sans text-[11px] text-gray-600 bg-amber-50/80 border border-amber-100 rounded-xl p-3 mb-3 leading-relaxed">
-                                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-800/80 mb-1">拼图方案</p>
+                                <div className="font-sans text-[11px] text-gray-600 bg-amber-50/80 border border-amber-100 rounded-xl p-3 mb-3 leading-relaxed">
+                                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-800/80 mb-1">编组说明 · 建议放一起的照片</p>
                                   {post.collageRationale}
                                   {post.layoutHint && (
-                                    <p className="text-gray-500 mt-1.5 text-[10px]">排版：{post.layoutHint}</p>
+                                    <p className="text-gray-500 mt-1.5 text-[10px]">顺序提示：{post.layoutHint}</p>
                                   )}
-                                </motion.div>
-                                <motion.div className="grid grid-cols-4 sm:grid-cols-6 gap-1 mb-3">
-                                  {thumbs.map(p => (
-                                    <img key={p.id} src={p.url} alt="" className="aspect-square object-cover rounded-md" />
+                                </div>
+                                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 mb-3">
+                                  {thumbs.map((p, i) => (
+                                    <div key={p.id} className="relative aspect-square rounded-md overflow-hidden">
+                                      <img src={p.url} alt="" className="w-full h-full object-cover" />
+                                      <span className="absolute top-0.5 left-0.5 w-5 h-5 bg-editorial-accent text-white text-[9px] font-bold font-sans rounded-full flex items-center justify-center">
+                                        {i + 1}
+                                      </span>
+                                    </div>
                                   ))}
-                                </motion.div>
-                                <motion.p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</motion.p>
-                                <motion.p className="font-sans text-[10px] text-editorial-accent/80 mb-4">{post.hashtags.join(' ')}</motion.p>
-                                <motion.div className="flex flex-wrap gap-2">
-                                  {isPosterFriendlyPost(post) && (
-                                    <button
-                                      type="button"
-                                      onClick={() => goToPosterFromPost(post)}
-                                      className="px-3 py-1.5 rounded-full bg-editorial-accent text-white font-sans text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
-                                    >
-                                      <AlbumPosterIcon className="w-3 h-3" />
-                                      去生成海报
-                                    </button>
-                                  )}
-                                  <button type="button" onClick={() => applyPostToSelection(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent hover:text-editorial-accent">载入九宫格</button>
-                                  <button type="button" onClick={() => copyCaption(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"><Copy className="w-3 h-3" /> 复制文案</button>
-                                  <button type="button" onClick={() => exportCuratedPost(post)} disabled={posterGenerating} className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50">
-                                    <Download className="w-3 h-3" />
-                                    {posterGenerating ? '生成中…' : `导出${COLLAGE_LAYOUT_LABELS[post.collageLayout]}`}
-                                  </button>
-                                </motion.div>
+                                </div>
+                                <p className="font-sans text-[12px] text-gray-700 leading-relaxed mb-1">{post.caption}</p>
+                                <p className="font-sans text-[10px] text-editorial-accent/80 mb-3">{post.hashtags.join(' ')}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => copyCaption(post)}
+                                  className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"
+                                >
+                                  <Copy className="w-3 h-3" /> 复制本条文案
+                                </button>
                               </motion.div>
                             );
                           })}
@@ -754,8 +443,98 @@ export default function Album(props?: AlbumProps) {
               )}
             </motion.div>
           )}
+
+          {view === 'report' && (
+            <motion.div
+              key="report"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="max-w-2xl mx-auto space-y-4"
+            >
+              {!curation ? (
+                <div className="text-center py-16 bg-white border border-editorial-border rounded-2xl p-8">
+                  <FileText className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                  <p className="font-sans text-sm text-gray-500 mb-4">请先在「智能编排」完成第 {uploadDay} 天分析</p>
+                  <button
+                    type="button"
+                    onClick={() => setView('curate')}
+                    className="px-6 py-2.5 rounded-full bg-editorial-accent text-white font-sans text-[11px] font-bold"
+                  >
+                    去智能编排
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2 print:hidden">
+                    <button
+                      type="button"
+                      onClick={copyFullReportText}
+                      className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1"
+                    >
+                      <Copy className="w-3 h-3" /> 复制全文
+                    </button>
+                  </div>
+                  <div className="bg-white border border-editorial-border rounded-2xl p-6 space-y-8 album-print-container">
+                    <div>
+                      <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold">完整故事线报告</p>
+                      <h2 className="text-2xl tracking-tight mt-1">
+                        {itinerary.days.find(d => d.day === curation.day)?.title || `第 ${curation.day} 天`}
+                      </h2>
+                      <p className="font-sans text-sm text-gray-600 mt-3 leading-relaxed">{curation.summary}</p>
+                    </div>
+                    {[...curation.posts]
+                      .sort((a, b) => a.storylineOrder - b.storylineOrder)
+                      .map(post => {
+                        const thumbs = photosForPost(post);
+                        return (
+                          <section key={post.id} className="break-inside-avoid border-t border-editorial-border pt-6">
+                            <p className="font-sans text-[10px] font-bold text-editorial-accent uppercase tracking-widest">
+                              故事线 #{post.storylineOrder} · {post.theme} · {post.timeSlot}
+                            </p>
+                            <h3 className="text-xl tracking-tight mt-1">{post.title}</h3>
+                            <p className="font-sans text-[11px] text-gray-400 mt-1">{post.scene} · {post.mood}</p>
+                            <div className="mt-3 p-3 bg-amber-50/80 border border-amber-100 rounded-xl text-sm text-gray-700 leading-relaxed">
+                              <strong className="block text-[10px] uppercase tracking-widest text-amber-800/90 mb-1">编组说明</strong>
+                              {post.collageRationale}
+                            </div>
+                            <p className="font-sans text-[11px] font-bold text-gray-500 mt-3 mb-2">本组 {thumbs.length} 张照片（按建议顺序）</p>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                              {thumbs.map((p, i) => (
+                                <div key={p.id} className="relative aspect-square rounded-lg overflow-hidden">
+                                  <img src={p.url} alt="" className="w-full h-full object-cover" />
+                                  <span className="absolute top-1 left-1 min-w-[1.25rem] h-5 px-1 bg-editorial-accent text-white text-[9px] font-bold font-sans rounded-full flex items-center justify-center">
+                                    {i + 1}
+                                  </span>
+                                  <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[8px] px-1 py-0.5 truncate font-sans">
+                                    {p.locationName}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="font-sans text-sm text-gray-700 mt-4 leading-relaxed">{post.caption}</p>
+                            <p className="font-sans text-[11px] text-editorial-accent/80 mt-1">{post.hashtags.join(' ')}</p>
+                          </section>
+                        );
+                      })}
+                    {(curation.unusedPhotoIds?.length ?? 0) > 0 && (
+                      <section className="border-t border-dashed border-gray-200 pt-6">
+                        <h3 className="font-sans text-sm font-bold text-gray-500">未编入故事线的照片</h3>
+                        <ul className="mt-2 font-sans text-[11px] text-gray-500 list-disc pl-4 space-y-1">
+                          {curation.unusedPhotoIds!.map(id => {
+                            const p = photoById.get(id);
+                            return p ? <li key={id}>{p.locationName}</li> : null;
+                          })}
+                        </ul>
+                      </section>
+                    )}
+                  </div>
+                </>
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
-    </motion.div>
+    </div>
   );
 }

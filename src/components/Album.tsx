@@ -11,8 +11,10 @@ import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
 import {
   exportCuratedCollage,
+  exportCollageOverviewGrid,
   exportMono,
   exportTextCard,
+  renderCuratedCollagePreview,
   COLLAGE_LAYOUT_LABELS,
   pickAutoCollageLayout,
 } from '../lib/posterExport';
@@ -68,11 +70,52 @@ export default function Album(props?: AlbumProps) {
   const [curation, setCuration] = useState<PhotoCurationResult | null>(null);
   const [curateError, setCurateError] = useState<string | null>(null);
   const [serverHasGemini, setServerHasGemini] = useState<boolean | null>(null);
+  const [collagePreviews, setCollagePreviews] = useState<
+    { postId: string; dataUrl: string; title: string; order: number }[]
+  >([]);
+  const [previewsLoading, setPreviewsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchServerHasGemini().then(setServerHasGemini);
   }, []);
+
+  useEffect(() => {
+    if (!curation?.posts.length) {
+      setCollagePreviews([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setPreviewsLoading(true);
+      const posts = [...curation.posts]
+        .filter(isPosterFriendlyPost)
+        .sort((a, b) => a.storylineOrder - b.storylineOrder)
+        .slice(0, 9);
+
+      const cells: { postId: string; dataUrl: string; title: string; order: number }[] = [];
+      for (const post of posts) {
+        const photos = post.photoIds
+          .map(id => photoById.get(id))
+          .filter((p): p is Photo => Boolean(p));
+        if (!photos.length) continue;
+        const dataUrl = await renderCuratedCollagePreview(photos, post.collageLayout, post.title);
+        if (dataUrl) {
+          cells.push({ postId: post.id, dataUrl, title: post.title, order: post.storylineOrder });
+        }
+      }
+
+      if (!cancelled) {
+        setCollagePreviews(cells);
+        setPreviewsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [curation, photoById]);
 
   const allPhotos = itinerary.days.flatMap(d => d.photos || []);
   const photoById = useMemo(() => new Map(allPhotos.map(p => [p.id, p])), [allPhotos]);
@@ -194,32 +237,30 @@ export default function Album(props?: AlbumProps) {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  const exportCuratedPost = async (post: CuratedPost) => {
+  const downloadCollageForPost = async (post: CuratedPost) => {
     const photos = photosForPost(post);
     if (photos.length === 0) return;
     setPosterGenerating(true);
     try {
-      switch (post.format) {
-        case 'grid':
-          if (post.collageLayout === 'grid_3x3' && photos.length >= 4) {
-            await exportCuratedCollage(photos, 'grid_3x3', post.title);
-          } else {
-            photos.forEach((p, i) => setTimeout(() => downloadPhoto(p, i), i * 250));
-          }
-          break;
-        case 'poster':
-        case 'single_hero':
-          await exportCuratedCollage(photos, post.collageLayout, post.title);
-          break;
-        case 'mono':
-          for (let i = 0; i < photos.length; i++) await exportMono(photos[i], i);
-          break;
-        case 'text_card':
-          await exportTextCard(photos[0], post.caption, 0);
-          break;
-        default:
-          await exportCuratedCollage(photos, post.collageLayout, post.title);
+      if (post.format === 'mono') {
+        for (let i = 0; i < photos.length; i++) await exportMono(photos[i], i);
+      } else if (post.format === 'text_card') {
+        await exportTextCard(photos[0], post.caption, 0);
+      } else {
+        await exportCuratedCollage(photos, post.collageLayout, post.title);
       }
+    } finally {
+      setPosterGenerating(false);
+    }
+  };
+
+  const downloadOverviewGrid = async () => {
+    if (collagePreviews.length === 0) return;
+    setPosterGenerating(true);
+    try {
+      await exportCollageOverviewGrid(
+        collagePreviews.map(c => ({ dataUrl: c.dataUrl, label: c.title }))
+      );
     } finally {
       setPosterGenerating(false);
     }
@@ -679,6 +720,71 @@ export default function Album(props?: AlbumProps) {
                     </motion.div>
                   ) : (
                   <motion.div className="space-y-6">
+                    {(previewsLoading || collagePreviews.length > 0) && (
+                      <motion.div className="bg-white border border-editorial-border rounded-2xl p-4 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <div>
+                            <p className="font-sans text-[10px] uppercase tracking-widest text-editorial-accent font-bold">
+                              拼图九宫格总览
+                            </p>
+                            <p className="font-sans text-[11px] text-gray-500 mt-1">
+                              每条发布方案的拼图预览（最多 9 条，按故事线排序）
+                            </p>
+                          </div>
+                          {collagePreviews.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={downloadOverviewGrid}
+                              disabled={posterGenerating}
+                              className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <Download className="w-3 h-3" />
+                              下载总览图
+                            </button>
+                          )}
+                        </div>
+                        {previewsLoading ? (
+                          <div className="flex flex-col items-center py-10 text-gray-400">
+                            <Loader2 className="w-8 h-8 animate-spin text-editorial-accent mb-2" />
+                            <p className="font-sans text-[11px]">正在生成拼图预览…</p>
+                          </div>
+                        ) : (
+                          <motion.div className="grid grid-cols-3 gap-1.5">
+                            {Array.from({ length: 9 }, (_, i) => {
+                              const cell = collagePreviews[i];
+                              if (!cell) {
+                                return (
+                                  <div
+                                    key={`empty-${i}`}
+                                    className="aspect-[3/4] rounded-md bg-gray-100 border border-dashed border-gray-200"
+                                  />
+                                );
+                              }
+                              return (
+                                <button
+                                  key={cell.postId}
+                                  type="button"
+                                  onClick={() => {
+                                    const post = curation.posts.find(p => p.id === cell.postId);
+                                    if (post) goToPosterFromPost(post);
+                                  }}
+                                  className="relative aspect-[3/4] rounded-md overflow-hidden group text-left"
+                                >
+                                  <img
+                                    src={cell.dataUrl}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 pt-6 pb-1.5 font-sans text-[8px] text-white line-clamp-2 leading-tight">
+                                    #{cell.order} {cell.title}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </motion.div>
+                        )}
+                      </motion.div>
+                    )}
                     {curationGroups.map(group => (
                       <div key={group.theme}>
                         <div className="flex items-center gap-2 mb-3 sticky top-24 z-10 bg-editorial-bg/90 py-1">
@@ -735,12 +841,29 @@ export default function Album(props?: AlbumProps) {
                                       去生成海报
                                     </button>
                                   )}
-                                  <button type="button" onClick={() => applyPostToSelection(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent hover:text-editorial-accent">载入九宫格</button>
                                   <button type="button" onClick={() => copyCaption(post)} className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent"><Copy className="w-3 h-3" /> 复制文案</button>
-                                  <button type="button" onClick={() => exportCuratedPost(post)} disabled={posterGenerating} className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50">
-                                    <Download className="w-3 h-3" />
-                                    {posterGenerating ? '生成中…' : `导出${COLLAGE_LAYOUT_LABELS[post.collageLayout]}`}
-                                  </button>
+                                  {isPosterFriendlyPost(post) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => downloadCollageForPost(post)}
+                                      disabled={posterGenerating}
+                                      className="px-3 py-1.5 rounded-full border border-editorial-border font-sans text-[10px] font-bold flex items-center gap-1 hover:border-editorial-accent disabled:opacity-50"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      {posterGenerating ? '生成中…' : '一键下载拼图'}
+                                    </button>
+                                  )}
+                                  {(post.format === 'mono' || post.format === 'text_card') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => downloadCollageForPost(post)}
+                                      disabled={posterGenerating}
+                                      className="px-3 py-1.5 rounded-full bg-editorial-text text-white font-sans text-[10px] font-bold flex items-center gap-1 disabled:opacity-50"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      导出
+                                    </button>
+                                  )}
                                 </motion.div>
                               </motion.div>
                             );

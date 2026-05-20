@@ -573,7 +573,27 @@ export default function Album(props?: AlbumProps) {
                 </motion.div>
               ) : (
                 <>
-                  <motion.p className="font-sans text-sm text-gray-600 bg-editorial-accent/5 border border-editorial-accent/10 rounded-xl p-4">{curation.summary}</motion.p>
+                  <motion.p className="font-sans text-sm text-gray-600 bg-editorial-accent/5 border border-editorial-accent/10 rounded-xl p-4">
+                    {curation.summary}
+                    {curation.posts.length > 0 && (
+                      <span className="block mt-2 font-bold text-editorial-accent">
+                        共 {curation.posts.length} 条发布方案 ↓
+                      </span>
+                    )}
+                  </motion.p>
+                  {curation.posts.length === 0 ? (
+                    <motion.div className="text-center py-10 bg-white border border-amber-200 rounded-2xl">
+                      <p className="font-sans text-sm text-amber-800 mb-3">分析已完成，但没有生成可展示的卡片。</p>
+                      <button
+                        type="button"
+                        onClick={runCurate}
+                        disabled={curating}
+                        className="px-4 py-2 rounded-full bg-editorial-accent text-white font-sans text-[11px] font-bold"
+                      >
+                        重新分析
+                      </button>
+                    </motion.div>
+                  ) : (
                   <motion.div className="space-y-4">
                     {curation.posts.map(post => {
                       const thumbs = photosForPost(post);
@@ -600,6 +620,7 @@ export default function Album(props?: AlbumProps) {
                       );
                     })}
                   </motion.div>
+                  )}
                 </>
               )}
             </motion.div>

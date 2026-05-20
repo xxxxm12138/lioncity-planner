@@ -161,17 +161,27 @@ export async function curateDayPhotos(
     storylineOrder: i + 1,
   }));
 
-  const usedIds = new Set(merged.flatMap(p => p.photoIds));
-  const unusedPhotoIds = photos.filter(p => !usedIds.has(p.id)).map(p => p.id);
-
   const batchNote =
     chunks.length > 1
       ? `共 ${photos.length} 张照片，分 ${chunks.length} 批由服务端 AI 分析完成。`
       : `共 ${photos.length} 张照片，已由服务端 AI 分析。`;
 
+  if (merged.length === 0) {
+    const fallback = demoCurate(photos, day);
+    return {
+      ...fallback,
+      summary: `${batchNote} 模型分组编号未能匹配到照片，已按顺序自动生成 ${fallback.posts.length} 条方案。`,
+    };
+  }
+
+  const usedIds = new Set(merged.flatMap(p => p.photoIds));
+  const unusedPhotoIds = photos.filter(p => !usedIds.has(p.id)).map(p => p.id);
+
   return {
     day,
-    summary: [batchNote, summaries.filter(Boolean).join(' ')].filter(Boolean).join(' ') || `已整理 ${merged.length} 条发布方案`,
+    summary:
+      [batchNote, summaries.filter(Boolean).join(' ')].filter(Boolean).join(' ') ||
+      `已整理 ${merged.length} 条发布方案`,
     posts: merged,
     unusedPhotoIds: unusedPhotoIds.length ? unusedPhotoIds : undefined,
   };

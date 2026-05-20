@@ -67,6 +67,90 @@ export function getServerGeminiModel() {
   return (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
 }
 
+/** Map model photoIndices (global / batch-local / 1-based) to global indices in allPhotoMeta. */
+function normalizeGlobalIndices(
+  indices: number[],
+  globalOffset: number,
+  batchLength: number,
+  totalPhotos: number
+): number[] {
+  const globalMax = globalOffset + batchLength;
+  const out: number[] = [];
+  const seen = new Set<number>();
+
+  for (let ix of indices) {
+    if (typeof ix !== 'number' || !Number.isFinite(ix)) continue;
+    ix = Math.round(ix);
+
+    let global: number | null = null;
+    if (ix >= globalOffset && ix < globalMax) {
+      global = ix;
+    } else if (ix >= 0 && ix < batchLength) {
+      global = globalOffset + ix;
+    } else if (ix >= 1 && ix <= batchLength) {
+      global = globalOffset + ix - 1;
+    } else if (
+      globalOffset === 0 &&
+      batchLength === totalPhotos &&
+      ix >= 1 &&
+      ix <= totalPhotos
+    ) {
+      global = ix - 1;
+    }
+
+    if (global != null && global >= 0 && global < totalPhotos && !seen.has(global)) {
+      seen.add(global);
+      out.push(global);
+    }
+  }
+  return out;
+}
+
+function fallbackBatchPosts(
+  allPhotoMeta: Pick<Photo, 'id' | 'locationName' | 'day'>[],
+  globalOffset: number,
+  batchLength: number,
+  aiSummary?: string
+): CuratedPost[] {
+  const formats: PostFormat[] = ['grid', 'poster', 'mono', 'text_card', 'single_hero'];
+  const posts: CuratedPost[] = [];
+  let local = 0;
+  let order = 1;
+
+  while (local < batchLength) {
+    const format = formats[(order - 1) % formats.length];
+    const count =
+      format === 'grid' ? Math.min(9, batchLength - local) :
+      format === 'poster' ? Math.min(5, batchLength - local) :
+      1;
+    const globals: number[] = [];
+    for (let i = 0; i < count; i++) globals.push(globalOffset + local + i);
+    const photoIds = globals
+      .map(g => allPhotoMeta[g]?.id)
+      .filter(Boolean) as string[];
+    if (photoIds.length === 0) break;
+
+    const first = allPhotoMeta[globals[0]];
+    posts.push({
+      id: `fallback-${globalOffset}-${order}`,
+      title: `第 ${order} 条 · ${first?.locationName || '旅途片段'}`,
+      scene: '自动分组',
+      mood: order % 2 === 0 ? '明亮纪实' : '电影感',
+      storylineOrder: order,
+      format,
+      caption:
+        aiSummary?.slice(0, 120) ||
+        `Day ${first?.day ?? 1} · ${first?.locationName || '新加坡'} 的一段记忆。`,
+      hashtags: ['#新加坡旅行', '#狮城', '#朋友圈'],
+      photoIds,
+      layoutHint: format === 'grid' ? '九宫格主图放第一张' : undefined,
+    });
+    local += count;
+    order += 1;
+  }
+  return posts;
+}
+
 export function formatGeminiError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   if (
@@ -143,14 +227,20 @@ ${priorContext}
   });
 
   const raw = JSON.parse(response.text || '{}') as { summary?: string; posts?: RawPost[] };
-  const globalMax = globalOffset + images.length;
+  const batchLength = images.length;
+  const totalPhotos = allPhotoMeta.length;
   const usedGlobal = new Set<number>();
 
-  const posts = (raw.posts || [])
+  let posts = (raw.posts || [])
     .sort((a, b) => a.storylineOrder - b.storylineOrder)
     .map((p, i) => {
-      const indices = (p.photoIndices || [])
-        .filter(ix => ix >= globalOffset && ix < globalMax && !usedGlobal.has(ix))
+      const indices = normalizeGlobalIndices(
+        p.photoIndices || [],
+        globalOffset,
+        batchLength,
+        totalPhotos
+      )
+        .filter(ix => !usedGlobal.has(ix))
         .slice(0, 9);
       indices.forEach(ix => usedGlobal.add(ix));
       const photoIds = indices.map(ix => allPhotoMeta[ix]?.id).filter(Boolean) as string[];
@@ -168,6 +258,10 @@ ${priorContext}
       };
     })
     .filter(p => p.photoIds.length > 0);
+
+  if (posts.length === 0 && batchLength > 0) {
+    posts = fallbackBatchPosts(allPhotoMeta, globalOffset, batchLength, raw.summary);
+  }
 
   return { summary: raw.summary || '', posts };
 }

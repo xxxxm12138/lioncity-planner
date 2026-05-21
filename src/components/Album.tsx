@@ -10,7 +10,8 @@ import { Camera, Download, Upload, BookOpen, MapPin, Sparkles, Loader2, Copy, Fi
 import { Translations } from '../lib/i18n';
 import { curateDayPhotos, fetchServerHasGemini } from '../lib/photoCurate';
 import { getCachedCuration } from '../lib/curationCache';
-import { buildDayReportHtml, downloadDayReportHtml, printDayReport } from '../lib/dayReport';
+import { buildDayReportHtmlAsync, downloadDayReportHtml, printDayReport } from '../lib/dayReport';
+import { sanitizeCurationSummary } from '../lib/curationDisplay';
 import StoryBook from './StoryBook';
 
 interface AlbumProps {
@@ -32,6 +33,8 @@ export default function Album(props?: AlbumProps) {
   const [curation, setCuration] = useState<PhotoCurationResult | null>(null);
   const [curateError, setCurateError] = useState<string | null>(null);
   const [usedCache, setUsedCache] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [serverHasGemini, setServerHasGemini] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -97,10 +100,24 @@ export default function Album(props?: AlbumProps) {
     processFiles(Array.from(e.dataTransfer.files));
   }, [processFiles]);
 
-  const reportHtml = useMemo(() => {
-    if (!curation) return null;
-    return buildDayReportHtml({ curation, itinerary, photosById: photoById });
-  }, [curation, itinerary, photoById]);
+  const exportReport = async (mode: 'download' | 'print') => {
+    if (!curation || exportingReport) return;
+    setExportingReport(true);
+    setExportProgress(null);
+    try {
+      const html = await buildDayReportHtmlAsync(
+        { curation, itinerary, photosById: photoById },
+        (done, total) => setExportProgress({ done, total })
+      );
+      if (mode === 'download') downloadDayReportHtml(html, curation.day);
+      else printDayReport(html);
+    } catch {
+      setCurateError('导出报告失败，请保持页面打开后重试');
+    } finally {
+      setExportingReport(false);
+      setExportProgress(null);
+    }
+  };
 
   const runCurate = async (forceRefresh = false) => {
     if (dayPhotos.length === 0) return;
@@ -153,7 +170,8 @@ export default function Album(props?: AlbumProps) {
       const names = photos.map((p, i) => `图${i + 1} ${p.locationName}`).join('、');
       return `【故事线 #${post.storylineOrder}】${post.title}\n${post.theme} · ${post.timeSlot}\n照片：${names}\n说明：${post.collageRationale}\n配文：${post.caption}\n${post.hashtags.join(' ')}`;
     });
-    const text = [curation.summary, '', ...blocks].join('\n\n');
+    const lead = sanitizeCurationSummary(curation.summary);
+    const text = [lead, '', ...blocks].filter(Boolean).join('\n\n');
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
@@ -219,19 +237,23 @@ export default function Album(props?: AlbumProps) {
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => reportHtml && printDayReport(reportHtml)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent"
+              onClick={() => exportReport('print')}
+              disabled={exportingReport}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-full border border-editorial-border font-sans text-[10px] font-bold hover:border-editorial-accent disabled:opacity-50"
             >
-              <Printer className="w-3 h-3" />
-              打印
+              {exportingReport ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
+              {exportingReport && exportProgress
+                ? `嵌入照片 ${exportProgress.done}/${exportProgress.total}`
+                : '打印'}
             </button>
             <button
               type="button"
-              onClick={() => reportHtml && downloadDayReportHtml(reportHtml, curation.day)}
-              className="flex items-center gap-1.5 bg-editorial-text text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold"
+              onClick={() => exportReport('download')}
+              disabled={exportingReport}
+              className="flex items-center gap-1.5 bg-editorial-text text-white px-4 py-2 rounded-full font-sans text-[10px] font-bold disabled:opacity-50"
             >
-              <Download className="w-3 h-3" />
-              下载报告
+              {exportingReport ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              {exportingReport ? '生成中…' : '下载报告'}
             </button>
           </div>
         )}

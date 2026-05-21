@@ -4,6 +4,7 @@
  */
 
 import { CuratedPost, Photo, PhotoCurationResult, Itinerary } from '../types';
+import { sanitizeCurationSummary } from '../lib/curationDisplay';
 import { Copy } from 'lucide-react';
 
 type StoryBookProps = {
@@ -163,6 +164,7 @@ export default function StoryBook({
   const dayTitle = dayPlan?.title || `第 ${curation.day} 天`;
   const vibe = itinerary.narrative?.vibe;
   const sorted = [...curation.posts].sort((a, b) => a.storylineOrder - b.storylineOrder);
+  const coverLead = sanitizeCurationSummary(curation.summary);
 
   const unused =
     photosById && curation.unusedPhotoIds?.length
@@ -178,8 +180,8 @@ export default function StoryBook({
         <p className="storybook-day-index font-sans">Day {String(curation.day).padStart(2, '0')}</p>
         <h2 className="storybook-cover-title">{dayTitle}</h2>
         {vibe && <p className="storybook-cover-vibe font-sans">{vibe}</p>}
-        <div className="storybook-cover-rule" aria-hidden />
-        <p className="storybook-cover-lead">{curation.summary}</p>
+        {coverLead && <div className="storybook-cover-rule" aria-hidden />}
+        {coverLead && <p className="storybook-cover-lead">{coverLead}</p>}
         {sorted.length > 0 && (
           <p className="storybook-cover-meta font-sans">
             {sorted.length} 章叙事 · {sorted.reduce((n, p) => n + p.photoIds.length, 0)} 帧光影

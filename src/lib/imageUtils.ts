@@ -33,6 +33,26 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Full data URL for embedding in exported HTML (works offline). */
+export async function photoToDataUrl(
+  url: string,
+  maxSide = 960,
+  quality = 0.85
+): Promise<string> {
+  if (url.startsWith('data:')) return url;
+  const img = await loadImage(url);
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas not supported');
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
 export function downloadDataUrl(dataUrl: string, filename: string) {
   const a = document.createElement('a');
   a.href = dataUrl;

@@ -4,21 +4,34 @@
  */
 
 import { Itinerary, Photo, PhotoCurationResult, CuratedPost } from '../types';
+import { photoToDataUrl } from './imageUtils';
+import { sanitizeCurationSummary } from './curationDisplay';
 
 export type DayReportInput = {
   curation: PhotoCurationResult;
   itinerary: Itinerary;
   photosById: Map<string, Photo>;
+  /** When set, img src uses embedded data URLs (for download / print). */
+  embeddedUrls?: Map<string, string>;
 };
 
-function photoGridHtml(photos: Photo[]): string {
+function photoSrc(photo: Photo, embedded?: Map<string, string>): string {
+  const embeddedUrl = embedded?.get(photo.id);
+  if (embeddedUrl) return embeddedUrl;
+  return photo.url;
+}
+
+function photoGridHtml(photos: Photo[], embedded?: Map<string, string>): string {
   if (!photos.length) return '';
   const cells = photos
-    .map(
-      p =>
-        `<figure><img src="${p.url}" alt="${escapeHtml(p.locationName || '')}" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`
-    )
+    .map(p => {
+      const src = photoSrc(p, embedded);
+      if (!src) return '';
+      return `<figure><img src="${src}" alt="${escapeHtml(p.locationName || '')}" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`;
+    })
+    .filter(Boolean)
     .join('');
+  if (!cells) return '';
   const layout =
     photos.length === 1
       ? 'solo'
@@ -32,7 +45,12 @@ function photoGridHtml(photos: Photo[]): string {
   return `<div class="spread-photos spread-photos--${layout}">${cells}</div>`;
 }
 
-function buildPostSection(post: CuratedPost, photos: Photo[], chapter: number): string {
+function buildPostSection(
+  post: CuratedPost,
+  photos: Photo[],
+  chapter: number,
+  embedded?: Map<string, string>
+): string {
   const tags = post.hashtags?.length ? `<p class="tags">${escapeHtml(post.hashtags.join(' '))}</p>` : '';
   const note = [post.collageRationale, post.layoutHint].filter(Boolean).join(' ');
   const epigraph = [post.timeSlot, post.theme, post.mood].filter(Boolean).map(escapeHtml).join(' · ');
@@ -41,7 +59,7 @@ function buildPostSection(post: CuratedPost, photos: Photo[], chapter: number): 
       <div class="spread-head"><span class="chapter">Chapter ${chapter}</span></div>
       <h3>${escapeHtml(post.title)}</h3>
       <p class="epigraph">${epigraph}</p>
-      ${photoGridHtml(photos)}
+      ${photoGridHtml(photos, embedded)}
       ${note ? `<blockquote class="whisper">${escapeHtml(note)}</blockquote>` : ''}
       <p class="verse">${escapeHtml(post.caption)}</p>
       ${tags}
@@ -57,10 +75,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function buildDayReportHtml({ curation, itinerary, photosById }: DayReportInput): string {
+export function buildDayReportHtml({ curation, itinerary, photosById, embeddedUrls }: DayReportInput): string {
   const dayPlan = itinerary.days.find(d => d.day === curation.day);
   const dayTitle = dayPlan?.title || `第 ${curation.day} 天`;
   const vibe = itinerary.narrative?.vibe || '';
+  const lead = sanitizeCurationSummary(curation.summary);
   const sorted = [...curation.posts].sort((a, b) => a.storylineOrder - b.storylineOrder);
 
   const sections = sorted
@@ -68,7 +87,7 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
       const photos = post.photoIds
         .map(id => photosById.get(id))
         .filter((p): p is Photo => Boolean(p));
-      return buildPostSection(post, photos, i + 1);
+      return buildPostSection(post, photos, i + 1, embeddedUrls);
     })
     .join('');
 
@@ -77,8 +96,19 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
     .filter((p): p is Photo => Boolean(p));
   const unusedBlock =
     unused.length > 0
-      ? `<footer class="orphans"><p class="orphans-label">散页</p><div class="orphans-grid">${unused.map(p => `<figure><img src="${p.url}" alt="" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`).join('')}</div></footer>`
+      ? `<footer class="orphans"><p class="orphans-label">散页</p><div class="orphans-grid">${unused
+          .map(p => {
+            const src = photoSrc(p, embeddedUrls);
+            if (!src) return '';
+            return `<figure><img src="${src}" alt="" /><figcaption>${escapeHtml(p.locationName || '')}</figcaption></figure>`;
+          })
+          .filter(Boolean)
+          .join('')}</div></footer>`
       : '';
+
+  const leadBlock = lead
+    ? `<p class="lead">${escapeHtml(lead)}</p>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -132,8 +162,8 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
       <p class="day">Day ${String(curation.day).padStart(2, '0')}</p>
       <h1>${escapeHtml(dayTitle)}</h1>
       ${vibe ? `<p class="vibe">${escapeHtml(vibe)}</p>` : ''}
-      <div class="rule"></div>
-      <p class="lead">${escapeHtml(curation.summary)}</p>
+      ${lead ? '<div class="rule"></div>' : ''}
+      ${leadBlock}
     </header>
     ${sections}
     ${unusedBlock}
@@ -141,6 +171,38 @@ export function buildDayReportHtml({ curation, itinerary, photosById }: DayRepor
   </div>
 </body>
 </html>`;
+}
+
+/** Embed all photos as data URLs so downloaded HTML works offline. */
+export async function buildDayReportHtmlAsync(
+  input: Omit<DayReportInput, 'embeddedUrls'>,
+  onProgress?: (done: number, total: number) => void
+): Promise<string> {
+  const ids = new Set<string>();
+  for (const post of input.curation.posts) {
+    for (const id of post.photoIds) ids.add(id);
+  }
+  for (const id of input.curation.unusedPhotoIds || []) ids.add(id);
+
+  const photos = [...ids]
+    .map(id => input.photosById.get(id))
+    .filter((p): p is Photo => Boolean(p));
+
+  const embeddedUrls = new Map<string, string>();
+  let done = 0;
+  const total = photos.length;
+
+  for (const photo of photos) {
+    try {
+      embeddedUrls.set(photo.id, await photoToDataUrl(photo.url));
+    } catch {
+      /* skip broken image */
+    }
+    done += 1;
+    onProgress?.(done, total);
+  }
+
+  return buildDayReportHtml({ ...input, embeddedUrls });
 }
 
 export function downloadDayReportHtml(html: string, day: number) {
